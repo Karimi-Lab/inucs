@@ -547,19 +547,32 @@ class Nucs:
 
     @staticmethod
     def read_csv(nucs_file, sep=S.FIELD_SEPARATOR, comment: str = S.COMMENT_CHAR, read_index=False):
+        nucs_cols_dict = {0: 'chrom', 1: 'start', 2: 'end'}
+        nucs_cols = list(nucs_cols_dict.values())  # ['chrom', 'start', 'end']
+        first_row = pd.read_csv(nucs_file, sep=sep, comment=comment, header=None, nrows=1)
+        first_row = first_row.iloc[0, :].tolist()
+        if nucs_cols == first_row[0:len(nucs_cols)] or \
+           nucs_cols == first_row[1:len(nucs_cols)+1]:  # needed because 1st column is optional
+            header = 1
+        else:
+            header = None
+
         try:
-            df = pd.read_csv(nucs_file, sep=sep, comment=comment)  # read nucs info: chrom, start, end
+            df = pd.read_csv(nucs_file, sep=sep, comment=comment, header=header)  # read nucs info: chrom, start, end
         except pd.errors.ParserError as parser_error:
             raise InputFileError(nucs_file) from parser_error
+
+        if header is None:
+            df = df.rename(nucs_cols_dict, axis=1)
 
         df = df.rename({'chr': 'chrom'}, axis=1)
         if read_index:
             if 'nuc_id' in df:
                 df = df.set_index('nuc_id')  # this is just resetting the same nuc_id read from file
         else:
-            df = df.sort_values(['chrom', 'start', 'end'])  # sorts and ensures cols exist
+            df = df.sort_values(nucs_cols)  # sorts and ensures cols exist
             df = df.reset_index(drop=True).rename_axis('nuc_id')
-            df = df[['chrom', 'start', 'end']]  # reordering cols and ignoring extra cols if any
+            df = df[nucs_cols]  # reordering cols and ignoring extra cols if any
 
         return df
 
