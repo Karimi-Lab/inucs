@@ -386,7 +386,7 @@ class Chroms(abc.Sequence):
                              sep=S.FIELD_SEPARATOR, header=None, usecols=[0], squeeze=True)
 
         if len(chroms) > 0 and chroms[0] in ['chrom', 'chr']:  # remove the first row if it was a header row
-            chroms = chroms.iloc[1:, :].reset_index(drop=True)
+            chroms = chroms.drop(index=0).reset_index(drop=True)
 
         self.__chroms = chroms
         self.__name = name if name else str(Path(chrom_list_file).name)
