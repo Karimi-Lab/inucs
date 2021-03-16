@@ -515,7 +515,7 @@ class Nucs:
                str(self.__id_chrom_start_end.head(2)) + '\n...\n(' + \
                str(self.__id_chrom_start_end.shape[0]) + ' nucleosomes)'
 
-    @functools.lru_cache
+    @functools.lru_cache()
     def find_nuc_id(self, chrom, pos):
         df = self.__chrom_2_id_chrom_start_end[chrom]
         i = df.start.searchsorted(pos)
@@ -525,12 +525,12 @@ class Nucs:
         found = nuc.start <= pos <= nuc.end
         return nuc.name, found  # nuc.name is nuc_id
 
-    @functools.lru_cache
+    @functools.lru_cache()
     def find_nuc(self, chrom, pos):
         id_, found = self.find_nuc_id(chrom, pos)
         return self.__id_chrom_start_end.iloc[id_, :] if found else None
 
-    @functools.lru_cache
+    @functools.lru_cache()
     def find_nucs_in_region(self, chrom, start_region, end_region) -> Optional['Nucs']:
         if chrom not in self.__chrom_2_id_chrom_start_end:
             return None
