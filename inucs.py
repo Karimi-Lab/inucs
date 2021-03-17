@@ -371,8 +371,10 @@ class Files:
         prev_needs_refresh = True
         for subdir, refresh_col in zip(subdir_list, refresh_col_list):
             subdir = self.working_dir / subdir
-            file_names = subdir / self.__working_files.file
-            file_names_zip = subdir / self.__working_files.file_zip
+            # file_names = subdir / self.__working_files.file  # requires Python 3.8+
+            # file_names_zip = subdir / self.__working_files.file_zip  # requires Python 3.8+
+            file_names = self.__working_files.file.map(lambda file, subdir=subdir: subdir / file)
+            file_names_zip = self.__working_files.file_zip.map(lambda file, subdir=subdir: subdir / file)
             needs_refresh = file_names.map(not_exists) & file_names_zip.map(not_exists)
             needs_refresh &= prev_needs_refresh  # means the two are "anded" together
             prev_needs_refresh = needs_refresh
