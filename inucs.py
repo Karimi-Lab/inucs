@@ -744,7 +744,7 @@ class NucInteras:
         # Step 2:
         # Combine Nucs and Interactions (which use the same MultiIndex ['chrom', 'pos'] now)
         index_names = ['orig'] + df_inter_stack.index.names  # 'orig' column will be 'nuc' or 'inter'
-        df_nuc_interas = pd.concat((df_nucs, df_inter_stack), keys=['nuc', 'inter'], names=index_names)
+        df_nuc_interas = pd.concat((df_nucs, df_inter_stack), keys=['nuc', 'inter'], names=index_names, sort=False)
         df_nuc_interas = df_nuc_interas.reset_index(level='orig').sort_index()  # sort on ['chrom', 'pos']
         df_nuc_interas = df_nuc_interas.fillna(method='ffill')  # Copy nuc_id,start,end for each inter from prev nuc
         df_nuc_interas = df_nuc_interas.query('pos <= end')  # nuc.start is already matched; nuc.end needs to match too
@@ -1049,7 +1049,7 @@ class NucInteraMatrix:
         if len(matrices) == 0:
             return self.__EMPTY
 
-        matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True)
+        matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
         matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2']).sum().reset_index()  # calculate counts
 
@@ -1090,7 +1090,7 @@ class NucInteraMatrix:
 
         # make matrix_ijv symmetric
         swapped = pd.DataFrame(matrix_ijv.values, columns=['nuc_id2', 'nuc_id1', 'counts'])  # swapped cols 2,1 or j,i
-        matrix_ijv = pd.concat([matrix_ijv, swapped])  # append ij rows with their swapped ji rows
+        matrix_ijv = pd.concat([matrix_ijv, swapped], sort=False)  # append ij rows with their swapped ji rows
 
         matrix_ijv['counts'] = np.uint16(1)  # set all rows to 1, but using unsigned type for space efficiency
         matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2']).sum().reset_index()  # calculate counts
@@ -1256,7 +1256,7 @@ class CLI:
                    x_axis_location='above', plot_width=900, plot_height=900,
                    tools=tools, toolbar_location='below')  # tooltips=tooltips,
 
-        full_ijv = pd.concat(matrices.values(), keys=matrices.keys(), names=['orient', None])
+        full_ijv = pd.concat(matrices.values(), keys=matrices.keys(), names=['orient', None], sort=False)
         full_ijv['log_counts'] = np.log2(full_ijv.counts + 1)  # Plus 1 to avoid log(0)
         # log_counts_stats = full_ijv.query(f'orient in {Files.orientations()}')['log_counts'].describe()
         log_counts_stats = full_ijv['log_counts'].describe()  # e.g., min and max
