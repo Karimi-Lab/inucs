@@ -14,6 +14,7 @@ import pprint
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from timeit import default_timer as timer
 from typing import Optional
@@ -1141,7 +1142,8 @@ class CLI:
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info(f"\n\n\n = = = = = Arguments for command '{command}':")
+        LOGGER.info('\n\n\n' + datetime.now().isoformat())
+        LOGGER.info(f"= = = = = Arguments for command '{command}':")
         LOGGER.info(pprint.pformat(locals()))  # log all the arguments
         LOGGER.info(f'Logging to file {log_file_name}.\n')
 
@@ -1177,7 +1179,8 @@ class CLI:
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info(f"\n\n\n = = = = = Arguments for command '{command}':")
+        LOGGER.info('\n\n\n' + datetime.now().isoformat())
+        LOGGER.info(f"= = = = = Arguments for command '{command}':")
         LOGGER.info(pprint.pformat(locals()))  # log all the arguments
         LOGGER.info(f'Logging to file {log_file_name}.\n')
 
