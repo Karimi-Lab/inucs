@@ -343,7 +343,10 @@ class Files:
         suffix = '' if self.base_file_name.suffix == '.gz' else self.base_file_name.suffix  # remove .gz
         df['file'] = self.base_file_name.stem + '.' + df.chrom + '.' + df.orientation + suffix
         df['file_zip'] = df.file + '.gz'  # todo remove: after adding --zip flag, file_zip is not needed anymore
-        df[Files.__STATES.dropna()['refresh_col'].to_list()] = True  # makes three bool columns for file refreshing
+
+        refresh_cols = Files.__STATES.dropna()['refresh_col'].tolist()
+        # df[refresh_cols] = True  # for Python 3.8+  # makes three bool columns for file refreshing
+        df = df.assign(**dict.fromkeys(refresh_cols, True))  # makes three bool columns for file refreshing
 
         self.__working_files = df
 
