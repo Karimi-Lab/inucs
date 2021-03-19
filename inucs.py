@@ -559,9 +559,9 @@ class Nucs:
         first_row = first_row.iloc[0, :].tolist()
         if nucs_cols == first_row[0:len(nucs_cols)] or \
                 nucs_cols == first_row[1:len(nucs_cols) + 1]:  # needed because 1st column is optional
-            header = 1
+            header = 0  # header on the first row
         else:
-            header = None
+            header = None  # no header line in the file
 
         try:
             df = pd.read_csv(nucs_file, sep=sep, comment=comment, header=header)  # read nucs info: chrom, start, end
