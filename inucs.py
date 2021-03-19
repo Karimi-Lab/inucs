@@ -345,8 +345,7 @@ class Files:
         df['file_zip'] = df.file + '.gz'  # todo remove: after adding --zip flag, file_zip is not needed anymore
 
         refresh_cols = Files.__STATES.dropna()['refresh_col'].tolist()
-        # df[refresh_cols] = True  # for Python 3.8+  # makes three bool columns for file refreshing
-        df = df.assign(**dict.fromkeys(refresh_cols, True))  # makes three bool columns for file refreshing
+        df[refresh_cols] = True  # makes three bool columns for file refreshing
 
         self.__working_files = df
 
@@ -371,10 +370,8 @@ class Files:
         prev_needs_refresh = True
         for subdir, refresh_col in zip(subdir_list, refresh_col_list):
             subdir = self.working_dir / subdir
-            # file_names = subdir / self.__working_files.file  # requires Python 3.8+
-            # file_names_zip = subdir / self.__working_files.file_zip  # requires Python 3.8+
-            file_names = self.__working_files.file.map(lambda file, sd=subdir: sd / file)
-            file_names_zip = self.__working_files.file_zip.map(lambda file, sd=subdir: sd / file)
+            file_names = subdir / self.__working_files.file
+            file_names_zip = subdir / self.__working_files.file_zip
             needs_refresh = file_names.map(not_exists) & file_names_zip.map(not_exists)
             needs_refresh &= prev_needs_refresh  # means the two are "anded" together
             prev_needs_refresh = needs_refresh
@@ -521,7 +518,7 @@ class Nucs:
                str(self.__id_chrom_start_end.head(2)) + '\n...\n(' + \
                str(self.__id_chrom_start_end.shape[0]) + ' nucleosomes)'
 
-    @functools.lru_cache()
+    @functools.lru_cache
     def find_nuc_id(self, chrom, pos):
         df = self.__chrom_2_id_chrom_start_end[chrom]
         i = df.start.searchsorted(pos)
@@ -531,12 +528,12 @@ class Nucs:
         found = nuc.start <= pos <= nuc.end
         return nuc.name, found  # nuc.name is nuc_id
 
-    @functools.lru_cache()
+    @functools.lru_cache
     def find_nuc(self, chrom, pos):
         id_, found = self.find_nuc_id(chrom, pos)
         return self.__id_chrom_start_end.iloc[id_, :] if found else None
 
-    @functools.lru_cache()
+    @functools.lru_cache
     def find_nucs_in_region(self, chrom, start_region, end_region) -> Optional['Nucs']:
         if chrom not in self.__chrom_2_id_chrom_start_end:
             return None
@@ -788,8 +785,8 @@ class NucInteras:
         """
 
         try:  # first make sure that bash is available
-            process = subprocess.Popen(  # ..., text=True)  # python 3.7
-                '/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
+            process = subprocess.Popen(
+                '/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         except FileNotFoundError:
             return False
 
@@ -1537,7 +1534,7 @@ if __name__ == "__main__":
 
     main()
 
-# done Min Python version was reduced to 3.6
+# done Min Python version was reduced to 3.8
 # done input checking, e.g.: validate_chroms_file, validate_nucs_file, validate_interas_file
 # done check for zipped Nucs file
 # done reverse y axis
