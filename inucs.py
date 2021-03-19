@@ -373,8 +373,8 @@ class Files:
             subdir = self.working_dir / subdir
             # file_names = subdir / self.__working_files.file  # requires Python 3.8+
             # file_names_zip = subdir / self.__working_files.file_zip  # requires Python 3.8+
-            file_names = self.__working_files.file.map(lambda file, subdir=subdir: subdir / file)
-            file_names_zip = self.__working_files.file_zip.map(lambda file, subdir=subdir: subdir / file)
+            file_names = self.__working_files.file.map(lambda file, sd=subdir: sd / file)
+            file_names_zip = self.__working_files.file_zip.map(lambda file, sd=subdir: sd / file)
             needs_refresh = file_names.map(not_exists) & file_names_zip.map(not_exists)
             needs_refresh &= prev_needs_refresh  # means the two are "anded" together
             prev_needs_refresh = needs_refresh
@@ -467,7 +467,7 @@ class Nucs:
             id_chrom_start_end = id_chrom_start_end.reset_index(drop=True)
             id_chrom_start_end = id_chrom_start_end.rename_axis('nuc_id')
 
-        # ensuring cols existence and order, and ignoring extra cols if any
+        # ensuring cols existence and in order, and ignoring extra cols if any
         self.__id_chrom_start_end = id_chrom_start_end[['chrom', 'start', 'end']]
 
         if chrom_list:  # keep only rows with chrom in chrom_list
@@ -558,7 +558,7 @@ class Nucs:
         first_row = pd.read_csv(nucs_file, sep=sep, comment=comment, header=None, nrows=1)
         first_row = first_row.iloc[0, :].tolist()
         if nucs_cols == first_row[0:len(nucs_cols)] or \
-           nucs_cols == first_row[1:len(nucs_cols)+1]:  # needed because 1st column is optional
+                nucs_cols == first_row[1:len(nucs_cols) + 1]:  # needed because 1st column is optional
             header = 1
         else:
             header = None
