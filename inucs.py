@@ -1557,3 +1557,5 @@ if __name__ == "__main__":
 # todo Bokeh, keep aspect ratio the same as zooming in and out
 # todo Bokeh, resize plot?
 # todo Efficiency: use parallelism to utilize multicore CPUs
+# todo Efficiency: in __split_interas_file__python Capture Repeated Group for chr1==chr2. E.g., see:
+# https://www.regular-expressions.info/captureall.html
