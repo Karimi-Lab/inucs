@@ -496,7 +496,7 @@ class Nucs:
 
     @property
     def id_chrom_start_end(self):
-        return self.__id_chrom_start_end.copy()
+        return self.__id_chrom_start_end.copy()  # todo efficiency: is copy() needed?
 
     def get_nucs(self, chrom) -> pd.DataFrame:
         return self.__chrom_2_id_chrom_start_end[chrom]
@@ -990,7 +990,7 @@ class NucInteraMatrix:
         nucs = self.__nucs.find_nucs_in_region(chrom, start_region, end_region)
         if nucs is None:
             return None
-        nucs = nucs.id_chrom_start_end.sort_index()
+        nucs = nucs.id_chrom_start_end.sort_index()  # todo efficiency: shouldn't sort once in nucs itself?
 
         min_nucs_id = nucs.index[0]
         max_nucs_id = nucs.index[-1]
