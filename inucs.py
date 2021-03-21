@@ -1556,3 +1556,6 @@ if __name__ == "__main__":
 # todo Efficiency: use parallelism to utilize multicore CPUs
 # todo Efficiency: in __split_interas_file__python Capture Repeated Group for chr1==chr2. E.g., see:
 # https://www.regular-expressions.info/captureall.html
+# todo Efficiency, Mem: use categorical data type in DataFrames to reduce the size
+# todo Efficiency, Mem: use memory profiling to see where is highest memory usage
+# todo Efficiency, Mem: check lru_cache memory usage in find_nucs_in_region, for example.
