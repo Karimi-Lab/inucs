@@ -21,6 +21,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from pandas import CategoricalDtype
 from pandas.errors import EmptyDataError
 
 
@@ -391,6 +392,7 @@ class Chroms(abc.Sequence):
         if len(chroms) > 0 and chroms[0] in ['chrom', 'chr']:  # remove the first row if it was a header row
             chroms = chroms.drop(index=0).reset_index(drop=True)
 
+        chroms = chroms.astype(CategoricalDtype(ordered=True))
         self.__chroms = chroms
         self.__name = name if name else str(Path(chrom_list_file).name)
         LOGGER.info(f'\nChroms file read: "{self.name}" containing {len(self)} chromosomes:')
@@ -577,6 +579,8 @@ class Nucs:
             df = df.reset_index(drop=True).rename_axis('nuc_id')
             df = df[nucs_cols]  # reordering cols and ignoring extra cols if any
 
+        df['chrom'] = df['chrom'].astype(CategoricalDtype(ordered=True))
+
         return df
 
     def to_csv(self, output_file=None, sep=S.FIELD_SEPARATOR, index: bool = True):
@@ -723,6 +727,8 @@ class NucInteras:
         except pd.errors.ParserError as parser_error:
             raise InputFileError(input_file) from parser_error
 
+        df_inter[0] = df_inter[0].astype(CategoricalDtype(ordered=True))  # chrom1
+        df_inter[2] = df_inter[2].astype(CategoricalDtype(ordered=True))  # chrom2
         df_inter.columns = schema.columns
         df_inter = df_inter.rename_axis(schema.index.name)
 
