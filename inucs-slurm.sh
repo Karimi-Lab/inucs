@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=inucs
-#SBATCH --mem=24G
+#SBATCH --mem=44G
 #SBATCH --output=slurm-4DNFI1O6IL1Q.pairs.gz.log
 # From man sbatch: SBATCH --mem=0
 # "A memory size specification of zero is treated as a special case and grants the job access to all of the memory on each node."
