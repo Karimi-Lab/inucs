@@ -706,7 +706,7 @@ class NucInteras:
             output_file = subdir_nuc_inter / output_file
             LOGGER.info(f'Creating nuc interaction file: {output_file}')
             df_interas = self.__read_interas_file(input_file)
-            df_nuc_interas = self.__create_nuc_interas(df_interas)
+            df_nuc_interas = self.__create_nuc_interas(df_interas, file_info.chrom)
             df_nuc_interas.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
             try:
                 Path(input_file).unlink()  # remove the cached input_file
@@ -734,12 +734,13 @@ class NucInteras:
 
         return df_inter
 
-    def __create_nuc_interas(self, df_inter: pd.DataFrame) -> pd.DataFrame:
+    def __create_nuc_interas(self, df_inter: pd.DataFrame, chrom) -> pd.DataFrame:
 
         # Step 1:
         # Both Nucs and Interactions will use the same MultiIndex ['chrom', 'pos']
         # See __init__() for preprocessing of self.__nucs__id_chrom_start_end
         df_nucs = self.__nucs__id_chrom_start_end  # already has .set_index(['chrom', 'pos'])
+        df_nucs = df_nucs.query(f'chrom == "{chrom}"')
 
         df_inter_stack = df_inter.stack(level='side').reset_index()  # 'side' becomes a col, with 'side1' or 'side2'
         df_inter_stack = df_inter_stack.set_index(['chrom', 'pos'])  # .sort_index()
@@ -748,7 +749,7 @@ class NucInteras:
         # Combine Nucs and Interactions (which use the same MultiIndex ['chrom', 'pos'] now)
         index_names = ['orig'] + df_inter_stack.index.names  # 'orig' column will be 'nuc' or 'inter'
         df_nuc_interas = pd.concat((df_nucs, df_inter_stack), keys=['nuc', 'inter'], names=index_names, sort=False)
-        df_nuc_interas = df_nuc_interas.reset_index(level='orig').sort_index()  # sort on ['chrom', 'pos']
+        df_nuc_interas = df_nuc_interas.reset_index(level='orig').sort_index(level='pos')  # chrom is unique, so sorted
         df_nuc_interas = df_nuc_interas.fillna(method='ffill')  # Copy nuc_id,start,end for each inter from prev nuc
         df_nuc_interas = df_nuc_interas.query('pos <= end')  # nuc.start is already matched; nuc.end needs to match too
         df_nuc_interas = df_nuc_interas.drop(columns=['start', 'end'])  # they are not needed anymore
