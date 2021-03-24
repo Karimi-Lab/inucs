@@ -2,8 +2,6 @@
 
 Given a nucleosomes file and a DNA-DNA interactions files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them.
 
-[TOC]
-
 
 ------
 ## Installation
