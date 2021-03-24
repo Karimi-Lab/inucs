@@ -1,0 +1,6 @@
+$ zcat data/4DNFI1O6IL1Q.pairs.gz | wc
+3220503679 32205035559 261987002475
+
+
+3,220,503,679 interactions (includes ~250 comment lines)
+261,987,002,475 (or 261 GB of data)
