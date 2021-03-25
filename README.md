@@ -181,13 +181,17 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 ------
 ## 3 Implementation
 
-### 3.1 Algorithm
+### 3.1 Input Data Structure
+
+### 3.2 Problem Specification
+
+### 3.3 Algorithm
 
 #### Search-Based Algorithm (bad idea!)
 
 #### Sorting-Based Algorithm
 
-### 3.2 Efficiency
+### 3.4 Efficiency
 
 Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img alt="n log n" src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
 There has been considerable work put into sorting algorithms, and a time complexity of <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
@@ -225,7 +229,7 @@ As discussed below in the [Scalability section](#scalability) below, in order to
 We are planning for the next version of `inucs` to add support for parallelism for higher utilization of modern multicore CPUs.
 
 
-### 3.3 Scalability
+### 3.5 Scalability
 We have put a large effort to make `inucs` scalable as much as possible given our limited development time. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, `inucs` can process more than 3.2 billion human chromosome interactions (over 261 GB file size), while running a regular PC as long as it has 40 GB of RAM or more. (It took about 16 hours to complete in our testing.) 
 
 Scalability in `inucs` is achieved primarily by breaking down the data into smaller pieces in different stages of running the program. Therefore, at any given time, there is only some manageable chunk of data in memory, and the intermediary results are constantly written on storage space and read back in as needed.
