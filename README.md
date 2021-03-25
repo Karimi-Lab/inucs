@@ -1,10 +1,11 @@
+
 # iNucs
 
 Given a nucleosomes file and a DNA-DNA interactions files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them.
 
 
 ------
-## Installation
+## 1 Installation
 
 1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.8 or above
 2. Install the dependencies using Anaconda. In a terminal where anaconda is activated type:
@@ -22,7 +23,7 @@ conda install numpy pandas bokeh
 
 
 ------
-## Usage
+## 2 Usage
 
 
 
@@ -48,7 +49,7 @@ usage: inucs.py [-h] [-q] {prepare,plot} ...
 
 The curly brackets `{}` denote that either of `prepare` or `plot` can be used as commands to the program. The `-h` flag is to print this help message, and `-q` suppresses the program progress output.
 
-### The `prepare` Command
+### 2.1 The `prepare` Command
 
 In this step, a given potentially large DNA interaction file is broken into smaller pieces and corresponding nucleosome-nucleosome interaction matrices are build.
 
@@ -90,7 +91,7 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
 
 
 
-### The `plot` Command
+### 2.2 The `plot` Command
 
 The results produced by the `prepare` command are stored in the `<working_dir>` folder, from which the  `plot` command can produce heatmap plots of nucleosome-nucleosome interaction counts matrix. The user specifies the DNA region of interest, and the program finds out nucleosomes within that region, and selects the the submatrix nucleosome interactions existing within the user-specified DNA region. The final output of the `plot` command is a [Bokeh](https://bokeh.org/) interactive plot in `html` format, which can be opened in any standard browser such as Chrome.
 
@@ -126,7 +127,7 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
 
 
 
-### Examples
+### 2.3 Examples
 
 Let us see some example to help make this more clear. As mentioned above `./inucs.py prepare --help` gives the following usage message:
 
@@ -178,21 +179,53 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 
 
 ------
-## Implementation
+## 3 Implementation
 
-### Efficiency
+### 3.1 Algorithm
+
+#### Search-Based Algorithm (bad idea!)
+
+#### Sorting-Based Algorithm
+
+### 3.2 Efficiency
 
 Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img alt="n log n" src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
-There has been considerable work put into sorting algorithms, and a time complexity of <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> in avrage is the state of the art for many important search algorithms.
+There has been considerable work put into sorting algorithms, and a time complexity of <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
 
-For `inucs`, we have managed to reduce the problem of matching DNA interactions with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize to solution to our problem of nucleosome interactions.
+For `inucs`, we have managed to reduce the problem of matching DNA interactions with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.
 
 Another benefit of reducing the nucleosome problem into existing frameworks is that now `inucs` utilizes of vectorization capabilities provided by NumPy/Pandas with hardware support. This is all without adding extra visible complications within `inucs` to add vectorization, or in other words, without reinventing the wheel.
+
+It helps to consider an example to state how we have reduced the problem of finding nucleosomes for DNA interactions. The nucleosomes which are given as input to inucs are organized as in the example table below:
+
+| chrom | start | end   |
+| ----- | ----- | ----- |
+| ch1   | 49951 | 50091 |
+| ch1   | 50161 | 50301 |
+| ...   |       |       |
+
+The DNA interactions are also an input to `inucs` (optionally from the [Pairx](https://github.com/4dn-dcic/pairix) program). The following example table shows the important DNA interactions columns that are used by `inucs`. All other columns are quitely ignored.
+
+| id   | chrom1 | pos1  | chrom2 | pos2  | strand1 | strand2 |
+| ---- | ------ | ----- | ------ | ----- | ------- | ------- |
+| 1    | ch1    | 49971 | ch1    | 49998 | -       | -       |
+| 2    | ch1    | 50182 | ch1    | 50206 | -       | +       |
+| ...  |        |       |        |       |         |         |
+
+As discussed below in the [Scalability section](#scalability) below, in order to reduce the amount of data in RAM, we first break down the interactino input file down into chuncks based on chromosomes and orientations (strands ++, --, +-, -+). That means, when handling any given chunk we will be dealing with only one chromosome (i.e., `chrom1==chrom2`), and one orentation. This means that we can further ignore the strands columns above and work the following instead:
+
+| id   | chrom1 | pos1  | chrom2 | pos2  |
+| ---- | ------ | ----- | ------ | ----- |
+| 1    | ch1    | 49971 | ch1    | 49998 |
+| 2    | ch1    | 50182 | ch1    | 50206 |
+| ...  |        |       |        |       |
+
+
 
 We are planning for the next version of `inucs` to add support for parallelism for higher utilization of modern multicore CPUs.
 
 
-### Scalability
+### 3.3 Scalability
 We have put a large effort to make `inucs` scalable as much as possible given our limited development time. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, `inucs` can process more than 3.2 billion human chromosome interactions (over 261 GB file size), while running a regular PC as long as it has 40 GB of RAM or more. (It took about 16 hours to complete in our testing.) 
 
 Scalability in `inucs` is achieved primarily by breaking down the data into smaller pieces in different stages of running the program. Therefore, at any given time, there is only some manageable chunk of data in memory, and the intermediary results are constantly written on storage space and read back in as needed.
@@ -211,7 +244,7 @@ Some important breakdowns of the data are as follows
    A smaller range from the above matrix is selected by specifying: chromosome beginning-of-range end-of-range
 
 
-### Runtime Measurements
+### 3.4 Runtime Measurements
 
 As mentioned, currently we have not taken advantage of multiprocessing yet for the program. Thus, our runtime measurements are using a single CPU core on both the PC and HPC server examples below.
 
@@ -246,3 +279,14 @@ The human data used:
 The `prepare` commands, takes about ***980 minutes*** (or less than 17 hours) to complete for this example. One important note here is that most of the time is spent to break down the large input file into smaller manageable files, each of which contain data only for one chromosome and one orientation (i.e., --, ++, -+, or +-). More, specifically it takes about 700 minutes (less that 12 hours) to break down the file, and the remaining 280 minutes (less that 5  hours) to complete the interaction matrix calculations.
 
 The time for `plot` is about than *3.5 minutes*.
+
+#### Summary of Examples
+
+|                    | Yeast             | Human                    |
+| ------------------ | ----------------- | ------------------------ |
+| Computer           | Laptop, 1 core, 16 GB RAM | Server, 1 core, 40 GB RAM        |
+| Nucleosomes        | 77,060            | 13,811,032               |
+| DNA Interactions   | 24,163,427        | 3,220,503,431            |
+| Nucl. Interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
+| Time to prepare    | 4 minutes         | 980 minutes (~16  hours) |
+| Time to plot       | 15 seconds        | 3.5 minutes              |
