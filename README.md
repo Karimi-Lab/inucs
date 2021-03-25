@@ -6,7 +6,7 @@ Given a nucleosomes file and a DNA-DNA interactions files produced by the [Pairx
 ------
 ## Installation
 
-1. Install [Anaconda](https://www.anaconda.com/products/individual) with python 3.8 or above
+1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.8 or above
 2. Install the dependencies using Anaconda. In a terminal where anaconda is activated type:
 
 ```bash
@@ -182,11 +182,8 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 
 ### Efficiency
 
-Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to *n log n* to sort the array. We denote such performance or time complexity using the standard big-*O* notation as follows:
-$$
-O(n\ log\ n)
-$$
-There has been considerable work put into sorting algorithms, and the above time complexity is the state of the art for many important search algorithms.
+Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img alt="n log n" src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
+There has been considerable work put into sorting algorithms, and a time complexity of <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> in avrage is the state of the art for many important search algorithms.
 
 For `inucs`, we have managed to reduce the problem of matching DNA interactions with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize to solution to our problem of nucleosome interactions.
 
