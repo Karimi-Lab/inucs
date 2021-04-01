@@ -1,19 +1,29 @@
 
 # iNucs
 
-Given a nucleosomes file and a DNA-DNA interactions files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them.
+Given a nucleosomes file and a interaction pairs files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them. Here, we discuss the following aspects of `inucs` program:
+
+1. [Installation](#1-installation)
+2. [Usage](#2-usage)
+3. [Implementation](#3-implementation)
 
 
 ------
 ## 1 Installation
 
-1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.8 or above
-2. Install the dependencies using Anaconda. In a terminal where anaconda is activated type:
+1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.8 or above.
+2. Install the `inucs` dependencies using Anaconda. In a terminal where anaconda is activated type:
 
 ```bash
 conda install numpy pandas bokeh
 ```
-3. Then the fully self-contained python script, [`inucs.py`](./inucs.py), may be directly executed; for example: 
+Then, the fully self-contained python script, [`inucs.py`](./inucs.py), may be directly executed; for example: 
+
+```bash
+python inucs.py --help
+```
+
+Or, if you give the script execution permission via `chmod u+x inucs.py`, then simply:
 
 ```bash
 ./inucs.py --help
@@ -51,7 +61,7 @@ The curly brackets `{}` denote that either of `prepare` or `plot` can be used as
 
 ### 2.1 The `prepare` Command
 
-In this step, a given potentially large DNA interaction file is broken into smaller pieces and corresponding nucleosome-nucleosome interaction matrices are build.
+In this step, a given potentially large interaction pairs file is broken into smaller pieces and corresponding nucleosome-nucleosome interaction matrices are build.
 
 To access the built-in help for `prepare` command, issue:
 
@@ -77,7 +87,7 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
 
     * `<nucs>`: a file containing nucleosomes
 
-    * `<interacts>`: a file containing DNA-DNA interactions produced by the [Pairx](https://github.com/4dn-dcic/pairix) program
+    * `<interacts>`: a file containing interaction pairs produced by the [Pairx](https://github.com/4dn-dcic/pairix) program
 
       
 
@@ -181,52 +191,126 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 ------
 ## 3 Implementation
 
+For the sake of brevity, here we focus on the most important parts of the implementation for inucs, which allow to make the program both [efficient](#34-efficiency) and [scalable](#35-scalability) as it needs to deal with very larger datasets. 
+
 ### 3.1 Input Data Structure
 
-### 3.2 Problem Specification
+The `prepare` command, which does all the heavy lifting for `inucs`, takes in three input file. We skip discussing the first input file containing chromosomes for its simplicity. The second input file contains the nucleosomes with three columns: [`chrom`,  `start`,  `end`], as in the example table below with one added column, `nuc_id` as an integer id for each nucleosome:
+
+| nuc_id | chrom | start | end   |
+| ------ | ----- | ----- | ----- |
+| 1      | ch1   | 49951 | 50091 |
+| 2      | ch1   | 50161 | 50301 |
+| 3      | ch1   | 50331 | 50471 |
+|        | ...   |       |       |
+
+The interaction pairs are also an input to `inucs` (optionally from the [Pairx](https://github.com/4dn-dcic/pairix) program). The following example table shows the important interaction pairs columns that are used by `inucs`. All other columns are quietly ignored.
+
+| ...  | chrom1 | pos1  | chrom2 | pos2  | strand1 | strand2 | ...  |
+| ---- | ------ | ----- | ------ | ----- | ------- | ------- | ---- |
+|      | ch1    | 49971 | ch1    | 49998 | -       | -       |      |
+|      | ch1    | 50182 | ch1    | 50446 | -       | +       |      |
+|      | ...    |       |        |       |         |         |      |
+
+As discussed in the [Scalability](#35-scalability) section below, in order to reduce the amount of data in RAM at any given time, we first break down the interaction pairs input file into chunks based on chromosomes and four orientations (strands ++, --, +-, -+). That means, when handling any given chunk of data, we will be dealing with only one chromosome (i.e., `chrom1==chrom2`), and one orientation. This means that we can further ignore the strands columns above and only work the following columns instead, with one added column, interact_id as an integer id for each interaction pair:
+
+| interact_id | chrom1 | pos1  | chrom2 | pos2  |
+| ----------- | ------ | ----- | ------ | ----- |
+| 1           | ch1    | 49971 | ch1    | 49998 |
+| 2           | ch1    | 50182 | ch1    | 50446 |
+|             | ...    |       |        |       |
+
+In the next sections, we will discuss these tables further and make use of the example data above.
+
+### 3.2 High-level Solution Steps
+
+Our ultimate goal is to come up with a square matrix with the size of nucleosomes that specifies how many interaction pairs exist between any given two nucleosomes. Some nucleosome input files (e.g., for humans) may contain well over 10 million nucleosomes. If we would like to store the number of interaction pairs between any two nucleosomes, then we need a count matrix with the size of 10,000,000*10,000,000 or 10^14^. That means, the count matrix will require hundred's of tera bytes of storage! Luckily, however, most entries in the count matrix are zero, which means there is no interactions between most of nucleosomes.  Thus, we can only store the counts that are more than zero in a *sparse matrix*, and consider any unspecified entry to be zero. The example table in **Final Step** below shows such a sparse matrix. In order to come up with that results, we will need to take one more intermediary step.
+
+**Intermediary Step:**
+
+Staring from the last table above, find out that each side of the interaction pairs fall into which nucleosome. For our running example here, we will have:
+
+| interact_id | chrom1 | pos1  | chrom2 | pos2  | *nuc_id1* | *nuc_id2* |
+| ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
+| 1           | ch1    | 49971 | ch1    | 49998 | 1         | 2         |
+| 2           | ch1    | 50182 | ch1    | 50446 | 2         | 3         |
+|             | ...    |       |        |       |           |           |
+
+Note that the last two columns, `nuc_id1` and `nuc_id2`, have been added, with the `nuc_id` values coming from the nucleosomes table above. For example, when `chrom2` is *ch1* and `pos2` is *49971*, `nuc_id2` fall into the second nucleosome for which id is *2*.
+
+It turns out that carrying out this intermediary step is the most challenging step computationally. We will discuss this step in more detail below.
+
+**Final Step:**
+
+Next, we can go thorough the last table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
+
+| nuc_id1 | nuc_id2 | count |
+| ------- | ------- | ----- |
+| 1       | 2       | 1     |
+| 2       | 3       | 1     |
+| ...     |         |       |
+
+The table above is an example of the final count matrix that we were after! If we have this count matrix, then we can go ahead and select any parts of it to plot a *heatmap* for, for example.
 
 ### 3.3 Algorithm
 
-#### Search-Based Algorithm (bad idea!)
+Here we would like to discuss only what is computationally most challenging which is carrying out the intermediary step above. 
 
-#### Sorting-Based Algorithm
+To summarize the above example, we have the following two tables:
+
+**nucleosomes** (with the number of rows equal to ***q***)
+
+| nuc_id | chrom | start | end  |
+| ------ | ----- | ----- | ---- |
+|        |       |       |      |
+
+**interaction pairs** (with the number of rows equal to ***p***)
+
+| interact_id | chrom1 | pos1 | chrom2 | pos2 |
+| ----------- | ------ | ---- | ------ | ---- |
+|             |        |      |        |      |
+
+And we would like to achieve the following **intermediary table** (from which we can relatively easily compute the final counts matrix):
+
+| interact_id | chrom1 | pos1  | chrom2 | pos2  | nuc_id1 | nuc_id2 |
+| ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
+|             |     |       |        |       |           |           |
+
+Note that the number of rows for the intermediary table will also be equal to ***p*** (same as interaction pairs).
+
+For convenience, we **define *n*** to be the larger value of ***p*** and ***q***, so we can say ***n = max(q, p)***. This will allow us to replace the sizes for all the three tables with ***n*** which is an upper limit (the size the any table cannot be larger than ***n***).
+
+We will discuss two approaches to achieve this results.
+
+#### Algorithm Using Search (bad idea!)
+
+One easy (or naïve) approach to compute the intermediary table above is to search for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). The speed up this search we can first sort the nucleosomes, then finding any side of a pair will take only <img src="https://render.githubusercontent.com/render/math?math=O(log\ n)">. Now, for each pair we have to do that for both sides or *2n* times, which means <img src="https://render.githubusercontent.com/render/math?math=O(2n\ log\ n)"> or just <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> by the definition of the big-*O* notation. Note that one time sorting of nucleosomes will take an additional <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> steps, but still <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> + <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> will be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> again by the definition of the big-*O* notation.
+
+The time complexity for the simple approach seems good enough. However, we will see in the next section how we can significantly improve it.
+
+#### Algorithm Using Sorting
+
+...
+
+It helps to consider an example to state how we have reduced the problem of finding nucleosomes for interaction pairs. 
 
 ### 3.4 Efficiency
 
-Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img alt="n log n" src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
-There has been considerable work put into sorting algorithms, and a time complexity of <img alt="O(n log n)" src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
+Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
+There has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
 
-For `inucs`, we have managed to reduce the problem of matching DNA interactions with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.
+For `inucs`, we have managed to reduce the problem of matching interaction pairs with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.
 
 Another benefit of reducing the nucleosome problem into existing frameworks is that now `inucs` utilizes of vectorization capabilities provided by NumPy/Pandas with hardware support. This is all without adding extra visible complications within `inucs` to add vectorization, or in other words, without reinventing the wheel.
 
-It helps to consider an example to state how we have reduced the problem of finding nucleosomes for DNA interactions. The nucleosomes which are given as input to inucs are organized as in the example table below:
+#### Future Efficiency Improvements:
 
-| chrom | start | end   |
-| ----- | ----- | ----- |
-| ch1   | 49951 | 50091 |
-| ch1   | 50161 | 50301 |
-| ...   |       |       |
+We are planning for the next version of `inucs` continue to improve the efficiency through different means such as:
 
-The DNA interactions are also an input to `inucs` (optionally from the [Pairx](https://github.com/4dn-dcic/pairix) program). The following example table shows the important DNA interactions columns that are used by `inucs`. All other columns are quitely ignored.
-
-| id   | chrom1 | pos1  | chrom2 | pos2  | strand1 | strand2 |
-| ---- | ------ | ----- | ------ | ----- | ------- | ------- |
-| 1    | ch1    | 49971 | ch1    | 49998 | -       | -       |
-| 2    | ch1    | 50182 | ch1    | 50206 | -       | +       |
-| ...  |        |       |        |       |         |         |
-
-As discussed below in the [Scalability section](#scalability) below, in order to reduce the amount of data in RAM, we first break down the interactino input file down into chuncks based on chromosomes and orientations (strands ++, --, +-, -+). That means, when handling any given chunk we will be dealing with only one chromosome (i.e., `chrom1==chrom2`), and one orentation. This means that we can further ignore the strands columns above and work the following instead:
-
-| id   | chrom1 | pos1  | chrom2 | pos2  |
-| ---- | ------ | ----- | ------ | ----- |
-| 1    | ch1    | 49971 | ch1    | 49998 |
-| 2    | ch1    | 50182 | ch1    | 50206 |
-| ...  |        |       |        |       |
-
-
-
-We are planning for the next version of `inucs` to add support for parallelism for higher utilization of modern multicore CPUs.
+- Reduce the size of the tables that need to be sorted, by *reusing* parts of the tables are that already sorted, which can be *linearly* merged together.
+- Add support for parallelism for higher utilization of modern multicore CPUs.
+- Make use of lower level libraries such as Cython to improve efficiency of key areas in the algorithm which are most consuming.
+- Improve the efficiency of the algorithms that break down the large interaction pairs input files to achieve scalability (see next subsection below).
 
 
 ### 3.5 Scalability
@@ -235,7 +319,7 @@ We have put a large effort to make `inucs` scalable as much as possible given ou
 Scalability in `inucs` is achieved primarily by breaking down the data into smaller pieces in different stages of running the program. Therefore, at any given time, there is only some manageable chunk of data in memory, and the intermediary results are constantly written on storage space and read back in as needed.
 
 Some important breakdowns of the data are as follows
-* Input: Interactions between chromosome locations
+* Input: Interaction pairs between chromosome locations
 
    Broken into chromosomes and orientations (strands ++, --, +-, -+); e.g., for human data that would be 24 chromosomes times 4 orientations, which means 96 data files extracted from original input.
    
@@ -247,21 +331,25 @@ Some important breakdowns of the data are as follows
 
    A smaller range from the above matrix is selected by specifying: chromosome beginning-of-range end-of-range
 
+#### Future Scalability Improvements:
+
+The interaction pairs input file is very large and currently we start with breaking it down to smaller chunks for each chromosomes and orientation. This does help with scalability! However, the resulting chunks are still too large requiring substantial RAM to perform steps such as table sorting as mentioned before. It is possible to further break down these chuck into yet smaller pieces, which will in turn improve scalability further allowing to deal with even larger data requiring even less RAM, for example.
+
 
 ### 3.4 Runtime Measurements
 
 As mentioned, currently we have not taken advantage of multiprocessing yet for the program. Thus, our runtime measurements are using a single CPU core on both the PC and HPC server examples below.
 
-#### Example 1: Yeast Data
+#### Example 1: *S. cerevisiae* Data
 
-The `inucs` application can process yeast data on a regular PC. For one example run, we have used a
+The `inucs` application can process *S. cerevisiae* data on a regular PC. For one example run, we have used a
 
 > Laptop, using one core from a Intel(R) Core(TM) i7-8565U CPU, with 16 GB of RAM, running Windows 10.
 
-The yeast data used:
+The *S. cerevisiae* data used:
 
 * For `<nucs>`, 77,060 nucleosomes
-* For `<interacts>`, 24,163,427 DNA interactions
+* For `<interacts>`, 24,163,427 interactions pairs
 * With a resulting nucleosome interaction **matrix size** of **77,060**nucs x **77,060**nucs 
 
 The `prepare` commands, takes less than ***4 minutes*** to complete for this example. 
@@ -277,7 +365,7 @@ The application takes much longer to process human data as expected. For this ex
 The human data used:
 
 * For `<nucs>`, 13,811,032 nucleosomes
-* For `<interacts>`, 3,220,503,431 DNA interactions
+* For `<interacts>`, 3,220,503,431 interactions pairs
 * With a resulting nucleosome interaction **matrix size** of **13,811,032**nucs x **13,811,032**nucs
 
 The `prepare` commands, takes about ***980 minutes*** (or less than 17 hours) to complete for this example. One important note here is that most of the time is spent to break down the large input file into smaller manageable files, each of which contain data only for one chromosome and one orientation (i.e., --, ++, -+, or +-). More, specifically it takes about 700 minutes (less that 12 hours) to break down the file, and the remaining 280 minutes (less that 5  hours) to complete the interaction matrix calculations.
@@ -286,11 +374,11 @@ The time for `plot` is about than *3.5 minutes*.
 
 #### Summary of Examples
 
-|                    | Yeast             | Human                    |
+|                    | *S. cerevisiae* | Human                    |
 | ------------------ | ----------------- | ------------------------ |
 | Computer           | Laptop, 1 core, 16 GB RAM | Server, 1 core, 40 GB RAM        |
 | Nucleosomes        | 77,060            | 13,811,032               |
-| DNA Interactions   | 24,163,427        | 3,220,503,431            |
-| Nucl. Interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
+| Interactions pairs | 24,163,427        | 3,220,503,431            |
+| Nucleosome Interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
 | Time to prepare    | 4 minutes         | 980 minutes (~16  hours) |
 | Time to plot       | 15 seconds        | 3.5 minutes              |
