@@ -394,7 +394,7 @@ Note that this table is exactly like the interaction pairs table, with added col
 
 Indeed, this is the intermediary table that we were after! That is, we managed to use ***sorting*** to find out the nucleosomes for both sides of each interaction pair.
 
-Just as reminder, the final step from here will be relatively easy. We can just go thorough the table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
+Just as a reminder, the final step from here will be relatively easy. We can just go thorough the table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
 
 | nuc_id1 | nuc_id2 | count |
 | ------- | ------- | ----- |
@@ -406,18 +406,11 @@ This is a *sparse matrix* representation of the nucleosome interactions count ma
 
 ### 3.4 Efficiency
 
-For example, modern CPUs can provide hardware-level support for *vectorization*. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations. Using SIMD operations can be, for example, two order of magnitude faster than doing the same operations one by one! Further, Python (as with many other modern languages) take advantage of the power of SIMD operations in important libraries such as NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)). 
+The sorting-based algorithm discussed above is used in `inucs`. It relies on sorting to carry out all he heavy lifting parts of the algorithm and it has the same time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> (e.g., using merge sort) as the the binary search based algorithm that we discussed earlier.  However, even though the time complexity is not directly improved, each step of the algorithm is performed much faster (between one to two orders of magnitude) due to use of hardware-supported vectorization, which modern CPUs support at  hardware level. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations, and are significantly faster! Furthermore, Python (as with many other modern languages) takes advantage of the power of SIMD operations in important libraries such as Pandas/NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)).
 
-Now, the question is how can we leverage Python libraries Pandas and NumPy to ensure utilization of SIMD operations or hardware-level vectorization? One straightforward way of doing that is solve our problem of interest (i.e., coming up with the intermediary table above) in terms of operations that we know are utilizing vectorization. Sorting is one of such operations. In addition to vectorization, there has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
+Now, the question is how can we leverage Python libraries Pandas and NumPy to ensure utilization of SIMD operations or hardware-level vectorization? We have achieved this by solving our problem of interest (i.e., coming up with the intermediary table above) in terms of operations that we know are utilizing vectorization; i.e., sorting. In addition to vectorization, there has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">, e.g., using merge sort.
 
----
-
-Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
-~~There has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.~~
-
-~~For `inucs`, we have managed to reduce the problem of matching interaction pairs with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.~~
-
-Another benefit of reducing the nucleosome problem into existing frameworks is that now `inucs` utilizes of vectorization capabilities provided by NumPy/Pandas with hardware support. This is all without adding extra visible complications within `inucs` to add vectorization, or in other words, without reinventing the wheel.
+Given that the input data for `inucs` is expected to be very large, it is quite important to take time complexity of the underlying algorithms very seriously.
 
 #### Future Efficiency Improvements:
 
