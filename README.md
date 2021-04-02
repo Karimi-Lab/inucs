@@ -276,19 +276,27 @@ And we would like to achieve the following **intermediary table** (from which we
 | ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
 |             |     |       |        |       |           |           |
 
-Note that the number of rows for the intermediary table will also be equal to ***p*** (same as interaction pairs).
+The number of rows for this intermediary table will be the same as interaction pairs, ***p***.
 
-For convenience, we **define *n*** to be the larger value of ***p*** and ***q***, so we can say ***n = max(q, p)***. This will allow us to replace the sizes for all the three tables with ***n*** which is an upper limit (the size the any table cannot be larger than ***n***).
+For convenience, we **define *n*** to be the larger value of ***p*** and ***q***, so we can say ***n = max(q, p)***. This will allow us to replace the sizes for all the three tables with ***n*** which will be an upper limit (the size the any table cannot be larger than ***n***).
 
-We will discuss two approaches to achieve this results.
+We will discuss two approaches to achieve the intermediary table above.
 
-#### Algorithm Using Search (bad idea!)
+#### Search-based Algorithms (bad idea!)
 
-One easy (or naïve) approach to compute the intermediary table above is to search for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). The speed up this search we can first sort the nucleosomes, then finding any side of a pair will take only <img src="https://render.githubusercontent.com/render/math?math=O(log\ n)">. Now, for each pair we have to do that for both sides or *2n* times, which means <img src="https://render.githubusercontent.com/render/math?math=O(2n\ log\ n)"> or just <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> by the definition of the big-*O* notation. Note that one time sorting of nucleosomes will take an additional <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> steps, but still <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> + <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> will be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> again by the definition of the big-*O* notation.
+One *naïve* approach to compute the intermediary table above is to *search* for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). We can look for both sides of an interaction pair by going through all the nucleosomes one by one. The will take <img src="https://render.githubusercontent.com/render/math?math=O(n)">time to find both sides, and we have to do that <img src="https://render.githubusercontent.com/render/math?math=O(n)">times, once for each interaction pair. Thus, in total, it will take quadratic time <img src="https://render.githubusercontent.com/render/math?math=O(n^2)">time for the naïve algorithm to complete. Consider that a typical human interaction pairs may contain (i.e., *n* is) a few billion rows! 
 
-The time complexity for the simple approach seems good enough. However, we will see in the next section how we can significantly improve it.
+For example, to get a sense of how much time this may take be in practice, let us assume that each step for the algorithm above takes one millisecond and that there are one billion interaction pairs, or n=10^9^. Thus, there will be n^2^=10^18^ steps for the naïve algorithm, each taking 10^-3^ seconds, so in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=10^18 \times 10^{-3} = 10^15"> seconds to complete. That is more that *31 million years*!
 
-#### Algorithm Using Sorting
+To speed up the search step, we can first sort the nucleosomes, and then we can use *binary search* for each side of a pair. This binary search will take only <img src="https://render.githubusercontent.com/render/math?math=O(log\ n)"> time, instead of the previous linear time, <img src="https://render.githubusercontent.com/render/math?math=O(n)."> Now, for each pair, we will have to do that for both sides or *2n* times, which means <img src="https://render.githubusercontent.com/render/math?math=O(2n\ log\ n)"> or just <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> by the definition of the big-*O* notation. Note that for this approach, we will have to sort the nucleosomes first, which will take an additional <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">steps. This will make the total required time to be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> + <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">which will still be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">again by the definition of the big-*O* notation.
+
+Using the same assumptions as in the previous example, for one billion interaction pairs, n=10^9^, now there will be <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n=10^9\times log(10^9)=9\times 10^9"> steps for the binary search based algorithm to complete. As before, assuming each step takes one millisecond, in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=9\times 10^9 \times 10^{-3} = 9\times 10^6"> seconds or about *3.5 months* to complete! 
+
+This is already a great improvement compared to the naïve approach! However, we will see in the next section how we can still significantly improve that.
+
+#### Sorting-based Algorithm
+
+The time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for this binary search approach seems reasonable. 
 
 ...
 
