@@ -290,24 +290,132 @@ For example, to get a sense of how much time this may take be in practice, let u
 
 To speed up the search step, we can first sort the nucleosomes, and then we can use *binary search* for each side of a pair. This binary search will take only <img src="https://render.githubusercontent.com/render/math?math=O(log\ n)"> time, instead of the previous linear time, <img src="https://render.githubusercontent.com/render/math?math=O(n)."> Now, for each pair, we will have to do that for both sides or *2n* times, which means <img src="https://render.githubusercontent.com/render/math?math=O(2n\ log\ n)"> or just <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> by the definition of the big-*O* notation. Note that for this approach, we will have to sort the nucleosomes first, which will take an additional <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> steps. This will make the total required time to be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> + <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> which will still be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> again by the definition of the big-*O* notation.
 
-Using the same assumptions as in the previous example, for one billion interaction pairs, n=10<sup>9</sup>, now there will be <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n=10^9\times log(10^9)=9\times 10^9"> steps for the binary search based algorithm to complete. As before, assuming each step takes one millisecond, in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=9\times 10^9 \times 10^{-3} = 9\times 10^6"> seconds or about *3.5 months* to complete! 
+Using the same assumptions as in the previous example, for one billion interaction pairs, n=10<sup>9</sup>, now there will be <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n=10^9\times log(10^9)=9\times 10^9"> steps for the binary search based algorithm to complete. As before, assuming each step takes one millisecond, in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=9\times 10^9 \times 10^{-3} = 9\times 10^6"> seconds or about *3.5 months* to complete! This is a great improvement compared to the naïve approach.
 
-This is already a great improvement compared to the naïve approach! However, we will see in the next section how we can still significantly improve that.
+#### Sorting-based Algorithm (used in `inucs`)
 
-#### Sorting-based Algorithm
+The time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the binary search based algorithm discussed above seems reasonable. However, we will see here how we can still significantly improve that. In particular, we would like to see even if we cannot improve the time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">, is there any way that we can speed up each step. It turns out that that answer is positive. 
 
-The time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for this binary search approach seems reasonable. 
+That is, if we manage to ***reduce the problem of matching interaction pairs with nucleosomes into a sorting problem***, then we can leverage the power of existing sorting algorithms, and we can utilize vectorization used by Python libraries for sorting. The reason why this can help is discussed in more detail in the following section on efficiency.
 
-...
+Now, we show how we can use sorting for matching interaction pairs with nucleosomes. Let us consider three of the example tables above, namely, nucleosomes, interaction pairs, and intermediary tables.
 
-It helps to consider an example to state how we have reduced the problem of finding nucleosomes for interaction pairs. 
+We start with slightly reformatting the **nucleosomes** by adding one column: `pos` with its values copied from `start`.
+
+| nuc_id | <u>chrom</u> | <u>pos</u> | start | end   |
+| ------ | ------------ | ---------- | ----- | ----- |
+| 1      | ch1          | 49951      | 49951 | 50091 |
+| 2      | ch1          | 50161      | 50161 | 50301 |
+| 3      | ch1          | 50331      | 50331 | 50471 |
+|        | ...          |            |       |       |
+
+Notice that two columns are underlined [<u>`chrom`</u> <u>`pos`</u>] to indicate that these two columns together hold **key** values for the whole table.
+
+Now, consider the example interaction pairs table:
+
+| interact_id | chrom1 | pos1  | chrom2 | pos2  |
+| ----------- | ------ | ----- | ------ | ----- |
+| 1           | ch1    | 49971 | ch1    | 49998 |
+| 2           | ch1    | 50182 | ch1    | 50446 |
+|             | ...    |       |        |       |
+
+We would like to be able to use the same key columns [<u>`chrom`</u> <u>`pos`</u>] for this table too. However, there are two sets of [<u>`chrom`</u> <u>`pos`</u>] columns for *side1* and *side2* of each pair in each row. We can reformat this table by turning each row into two rows by "stacking" them on each other. Both resulting rows will have the same interaction id `interact_id`, so we can always "unstack" them and go back to original format as needed. Here is the stacked version of the same table:
+
+| interact_id | side  | <u>chrom</u> | <u>pos</u> |
+| ----------- | ----- | ------------ | ---------- |
+| 1           | side1 | ch1          | 49971      |
+| 1           | side2 | ch1          | 49998      |
+| 2           | side1 | ch1          | 50182      |
+| 2           | side2 | ch1          | 50446      |
+|             |       | ...          |            |
+
+What used to be in [`chrom1` `pos1`] is now indicated by *side1*, and [`chrom2` `pos2`] is now indicated by *side2*. Please, observe that all the information captured in the original interaction pairs table is also captured in the new stacked version of it, and vise versa. That is, the two tables are equivalent.
+
+However, now, we are using the same key columns [<u>`chrom`</u> <u>`pos`</u>] in both reformatted tables for nucleosomes and interaction pairs. This in turn allows us to "merge" these two table as follows:
+
+| interact_id | side  | nuc_id | <u>chrom</u> | <u>pos</u> | start | end   |
+| ----------- | ----- | ------ | ------------ | ---------- | ----- | ----- |
+|             |       | 1      | ch1          | 49951      | 49951 | 50091 |
+|             |       | 2      | ch1          | 50161      | 50161 | 50301 |
+|             |       | 3      | ch1          | 50331      | 50331 | 50471 |
+| 1           | side1 |        | ch1          | 49971      |       |       |
+| 1           | side2 |        | ch1          | 49998      |       |       |
+| 2           | side1 |        | ch1          | 50182      |       |       |
+| 2           | side2 |        | ch1          | 50446      |       |       |
+|             |       |        | ...          |            |       |       |
+
+Now, we can ***sort*** on the key columns [<u>`chrom`</u> <u>`pos`</u>]. Note that this sorting will be very efficient as it will be utilizing hardware supported vectorization which will be discussed in more details in the next section. The sorted table will be as follows:
+
+| interact_id | side  | nuc_id | <u>chrom</u> | <u>pos</u> | start | end   |
+| ----------- | ----- | ------ | ------------ | ---------- | ----- | ----- |
+|             |       | 1      | ch1          | 49951      | 49951 | 50091 |
+| 1           | side1 |        | ch1          | 49971      |       |       |
+| 1           | side2 |        | ch1          | 49998      |       |       |
+|             |       | 2      | ch1          | 50161      | 50161 | 50301 |
+| 2           | side1 |        | ch1          | 50182      |       |       |
+|             |       | 3      | ch1          | 50331      | 50331 | 50471 |
+| 2           | side2 |        | ch1          | 50446      |       |       |
+|             |       |        | ...          |            |       |       |
+
+Now, we can easily fill in the missing values in all interaction pair rows from the the nucleosome rows just above them. (The newly added values are indicated by ***bold italics*** fonts.)
+
+| interact_id | side  | nuc_id  | <u>chrom</u> | <u>pos</u> | start       | end         |
+| ----------- | ----- | ------- | ------------ | ---------- | ----------- | ----------- |
+|             |       | 1       | ch1          | 49951      | 49951       | 50091       |
+| 1           | side1 | ***1*** | ch1          | 49971      | ***49951*** | ***50091*** |
+| 1           | side2 | ***1*** | ch1          | 49998      | ***49951*** | ***50091*** |
+|             |       | 2       | ch1          | 50161      | 50161       | 50301       |
+| 2           | side1 | ***2*** | ch1          | 50182      | ***50161*** | ***50301*** |
+|             |       | 3       | ch1          | 50331      | 50331       | 50471       |
+| 2           | side2 | ***3*** | ch1          | 50446      | ***50331*** | ***50471*** |
+|             |       |         | ...          |            |             |             |
+
+Now, the nucleosome rows are not needed anymore and can be dropped. Also, any row whose `pos` does not fall into the region between `start` and `end` will also be dropped (no row in the above example are dropped for this reason.) Also, because we do not need the `start` and `end` columns anymore, we can drop them too.
+
+Thus, we get the following resulting table:
+
+| interact_id | side  | nuc_id  | <u>chrom</u> | <u>pos</u> |
+| ----------- | ----- | ------- | ------------ | ---------- |
+| 1           | side1 | ***1*** | ch1          | 49971      |
+| 1           | side2 | ***1*** | ch1          | 49998      |
+| 2           | side1 | ***2*** | ch1          | 50182      |
+| 2           | side2 | ***3*** | ch1          | 50446      |
+|             |       |         | ...          |            |
+
+As alluded to earlier, we can now use the side column to "unstack" table. We can use `interact_id` to decide which two rows should merge into one, and use `side` to decide how to rename columns. That is, rows with *side1* fill in [`chrom1` `pos1` `nuc_id1`] columns, and rows with *side2* fill in [`chrom2` `pos2` `nuc_id2`] columns. Thus, the unstacked version of the table above will be as follows:
+
+| interact_id | chrom1 | pos1  | chrom2 | pos2  | *nuc_id1* | *nuc_id2* |
+| ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
+| 1           | ch1    | 49971 | ch1    | 49998 | 1         | 2         |
+| 2           | ch1    | 50182 | ch1    | 50446 | 2         | 3         |
+|             | ...    |       |        |       |           |           |
+
+Note that this table is exactly like the interaction pairs table, with added columns for `nuc_id1` and  `nuc_id2`.  
+
+Indeed, this is the intermediary table that we were after! That is, we managed to use ***sorting*** to find out the nucleosomes for both sides of each interaction pair.
+
+Just as reminder, the final step from here will be relatively easy. We can just go thorough the table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
+
+| nuc_id1 | nuc_id2 | count |
+| ------- | ------- | ----- |
+| 1       | 2       | 1     |
+| 2       | 3       | 1     |
+| ...     |         |       |
+
+This is a *sparse matrix* representation of the nucleosome interactions count matrix that was our main goal to achieve.
 
 ### 3.4 Efficiency
 
-Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
-There has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
+For example, modern CPUs can provide hardware-level support for *vectorization*. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations. Using SIMD operations can be, for example, two order of magnitude faster than doing the same operations one by one! Further, Python (as with many other modern languages) take advantage of the power of SIMD operations in important libraries such as NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)). 
 
-For `inucs`, we have managed to reduce the problem of matching interaction pairs with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.
+Now, the question is how can we leverage Python libraries Pandas and NumPy to ensure utilization of SIMD operations or hardware-level vectorization? One straightforward way of doing that is solve our problem of interest (i.e., coming up with the intermediary table above) in terms of operations that we know are utilizing vectorization. Sorting is one of such operations. In addition to vectorization, there has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.
+
+---
+
+Given that the input data for `inucs` is expected to be very large, it is important to take time complexity of the underlying algorithms very seriously. Time complexity models the expected amount of time needed for an algorithm to compete a task in terms of the size of its input. For example, a sorting algorithm may take as input *n* numbers and it may take a time proportional to <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n"> to sort the numbers. We denote such performance or time complexity using the standard big-*O* notation as: <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
+~~There has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> for the average case is the state of the art for many important search algorithms.~~
+
+~~For `inucs`, we have managed to reduce the problem of matching interaction pairs with nucleosomes into a sorting problem. This in turns allows us to leverage the power of existing sorting algorithms to optimize how we solve our problem of finding nucleosome interactions.~~
 
 Another benefit of reducing the nucleosome problem into existing frameworks is that now `inucs` utilizes of vectorization capabilities provided by NumPy/Pandas with hardware support. This is all without adding extra visible complications within `inucs` to add vectorization, or in other words, without reinventing the wheel.
 
