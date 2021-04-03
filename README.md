@@ -5,7 +5,7 @@ Given a nucleosomes file and a interaction pairs files produced by the [Pairx](h
 
 1. [Installation](#1-installation)
 2. [Usage](#2-usage)
-3. [Implementation](#3-implementation)
+3. [Algorithm](#3-algorithm)
 
 
 ------
@@ -189,9 +189,9 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 
 
 ------
-## 3 Implementation
+## 3 Algorithm
 
-For the sake of brevity, here we focus on the most important parts of the implementation for inucs, which allow to make the program both [efficient](#34-efficiency) and [scalable](#35-scalability) as it needs to deal with very larger datasets. 
+For the sake of brevity, here we focus on the most important parts of the algorithms used in inucs, which allow to make the program both [efficient](#34-efficiency) and [scalable](#35-scalability) as it needs to deal with very larger datasets.
 
 ### 3.1 Input Data Structure
 
@@ -252,7 +252,7 @@ Next, we can go thorough the last table above and simply count how many times ea
 
 The table above is an example of the final count matrix that we were after! If we have this count matrix, then we can go ahead and select any parts of it to plot a *heatmap* for, for example.
 
-### 3.3 Algorithm
+### 3.3 Algorithm Explanation
 
 Here we would like to discuss only what is computationally most challenging which is carrying out the intermediary step above. 
 
@@ -286,11 +286,11 @@ We will discuss two approaches to achieve the intermediary table above.
 
 One *naïve* approach to compute the intermediary table above is to *search* for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). We can look for both sides of an interaction pair by going through all the nucleosomes one by one. The will take <img src="https://render.githubusercontent.com/render/math?math=O(n)"> time to find both sides, and we have to do that <img src="https://render.githubusercontent.com/render/math?math=O(n)"> times, once for each interaction pair. Thus, in total, it will take quadratic time <img src="https://render.githubusercontent.com/render/math?math=O(n^2)"> time for the naïve algorithm to complete. Consider that a typical human interaction pairs may contain (i.e., *n* is) a few billion rows!
 
-For example, to get a sense of how much time this may take be in practice, let us assume that each step for the algorithm above takes one millisecond and that there are one billion interaction pairs, or n=10<sup>9</sup>. Thus, there will be n<sup>2</sup>=10<sup>18</sup> steps for the naïve algorithm, each taking 10<sup>-3</sup> seconds, so in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=10^18 \times 10^{-3} = 10^15"> seconds to complete. That is more that *31 million years*!
+***Example 1:*** To get a sense of how much time this may take be in practice, let us assume that each step for the algorithm above takes one millisecond and that there are one billion interaction pairs, or n=10<sup>9</sup>. Thus, there will be n<sup>2</sup>=10<sup>18</sup> steps for the naïve algorithm, each taking 10<sup>-3</sup> seconds, so in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=10^18 \times 10^{-3} = 10^15"> seconds to complete. That is more that *31 million years*!
 
 To speed up the search step, we can first sort the nucleosomes, and then we can use *binary search* for each side of a pair. This binary search will take only <img src="https://render.githubusercontent.com/render/math?math=O(log\ n)"> time, instead of the previous linear time, <img src="https://render.githubusercontent.com/render/math?math=O(n)."> Now, for each pair, we will have to do that for both sides or *2n* times, which means <img src="https://render.githubusercontent.com/render/math?math=O(2n\ log\ n)"> or just <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> by the definition of the big-*O* notation. Note that for this approach, we will have to sort the nucleosomes first, which will take an additional <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> steps. This will make the total required time to be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> + <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> which will still be <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> again by the definition of the big-*O* notation.
 
-Using the same assumptions as in the previous example, for one billion interaction pairs, n=10<sup>9</sup>, now there will be <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n=10^9\times log(10^9)=9\times 10^9"> steps for the binary search based algorithm to complete. As before, assuming each step takes one millisecond, in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=9\times 10^9 \times 10^{-3} = 9\times 10^6"> seconds or about *3.5 months* to complete! This is a great improvement compared to the naïve approach.
+***Example 2:*** Using the same assumptions as in Example 1, for one billion interaction pairs, n=10<sup>9</sup>, now there will be <img src="https://render.githubusercontent.com/render/math?math=n\ log\ n=10^9\times log(10^9)=9\times 10^9"> steps for the binary search based algorithm to complete. As before, assuming each step takes one millisecond, in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=9\times 10^9 \times 10^{-3} = 9\times 10^6"> seconds or about *3.5 months* to complete! This is a great improvement compared to the naïve approach.
 
 #### Sorting-based Algorithm (used in `inucs`)
 
@@ -406,11 +406,15 @@ This is a *sparse matrix* representation of the nucleosome interactions count ma
 
 ### 3.4 Efficiency
 
-The sorting-based algorithm discussed above is used in `inucs`. It relies on sorting to carry out all he heavy lifting parts of the algorithm and it has the same time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> (e.g., using merge sort) as the the binary search based algorithm that we discussed earlier.  However, even though the time complexity is not directly improved, each step of the algorithm is performed much faster (between one to two orders of magnitude) due to use of hardware-supported vectorization, which modern CPUs support at  hardware level. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations, and are significantly faster! Furthermore, Python (as with many other modern languages) takes advantage of the power of SIMD operations in important libraries such as Pandas/NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)).
+Given that the input data for `inucs` is expected to be very large, it is quite important to take time complexity of the underlying algorithms very seriously. The sorting-based algorithm discussed above is used in `inucs`. It relies on sorting to carry out all he heavy lifting parts of the algorithm and it has the same time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> (e.g., using merge sort) as the the binary search based algorithm that we discussed earlier.  However, even though the time complexity is not directly improved, each step of the algorithm is performed much faster (between one to two orders of magnitude) due to use of hardware-supported vectorization, which modern CPUs support at hardware level. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations, and are significantly faster! Furthermore, Python (as with many other modern languages) takes advantage of the power of SIMD operations in important libraries such as Pandas/NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)).
 
-Now, the question is how can we leverage Python libraries Pandas and NumPy to ensure utilization of SIMD operations or hardware-level vectorization? We have achieved this by solving our problem of interest (i.e., coming up with the intermediary table above) in terms of operations that we know are utilizing vectorization; i.e., sorting. In addition to vectorization, there has been considerable work put into sorting algorithms, and a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">, e.g., using merge sort.
+In other words, the sorting-based algorithm used in inucs has two takes advantage of hardware-supported vectorization through Pandas/NumPy libraries. In addition, there has been considerable work put into sorting algorithms, and for example merge sort has a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
 
-Given that the input data for `inucs` is expected to be very large, it is quite important to take time complexity of the underlying algorithms very seriously.
+In short, both algorithms discussed above, namely, binary search based algorithm and sorting based algorithm have the same time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">. However, each step in the later is much faster, significantly improving the overall performance. 
+
+***Example 3:*** In Example 2, we assumed that each step in the binary search based algorithm would take one millisecond, and for one billion interaction pairs, that algorithm could take about 9 million seconds or about *3.5 months* to complete. Now, assume  that the sorting based algorithm takes the same number of steps, but through use of hardware-supported vectorization, each step is performed 100 times faster. That means, instead of 9 million seconds, the sorting based algorithm will take 90,000 seconds or 25 hours. That is, vectorization has helped to reduce the total time needed from about *3.5 months* to about *1 day*.
+
+Interestingly, our empirical comparisons between these two algorithms shows the amount or time improvement between them: almost 100 times speed up (thanks to vectorization).
 
 #### Future Efficiency Improvements:
 
