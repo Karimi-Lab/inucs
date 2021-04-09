@@ -103,7 +103,7 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
 
 ### 2.2 The `plot` Command
 
-The results produced by the `prepare` command are stored in the `<working_dir>` folder, from which the  `plot` command can produce heatmap plots of nucleosome-nucleosome interaction counts matrix. The user specifies the DNA region of interest, and the program finds out nucleosomes within that region, and selects the the submatrix nucleosome interactions existing within the user-specified DNA region. The final output of the `plot` command is a [Bokeh](https://bokeh.org/) interactive plot in `html` format, which can be opened in any standard browser such as Chrome.
+The results produced by the `prepare` command are stored in the `<working_dir>` folder, from which the  `plot` command can produce heatmap plots of nucleosome-nucleosome interaction counts matrix. The user specifies the DNA region of interest, and the program finds out nucleosomes within that region, and selects the submatrix nucleosome interactions within the user-specified DNA region. The final output of the `plot` command is a [Bokeh](https://bokeh.org/) interactive plot in `html` format, which can be opened in any standard browser such as Google Chrome.
 
 To access the built-in help for `plot` command, use:
 ```bash
@@ -127,7 +127,7 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
 
 * Output
 
-  * The resulting heatmap plot file is also put inside the `<working_dir>` and starts with prefix `plot` or  `<outfile_prefix>` if that is specified by the user. The following pattern is used to generate the resulting plot file name:
+  * The resulting heatmap plot file is saved inside the `<working_dir>` and starts with the prefix `plot` or `<outfile_prefix>` if that is specified by the user. The following pattern is used to generate the resulting plot file name:
 
     `<working_dir>/<outfile_prefix>_<chrom>_<start_region>_<end_region>.html`
 
