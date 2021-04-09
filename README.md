@@ -139,7 +139,7 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
 
 ### 2.3 Examples
 
-> ***EXAMPLE DATA:*** You may download some [example data for human and yeast](https://emckclac-my.sharepoint.com/:f:/g/personal/k2040209_kcl_ac_uk/Ev9FR2K2kqlKoPpVIpf9Wc0BR_716C_6LyFGfWgqRSuT8Q) if needed.
+> ***EXAMPLE DATA:*** You may download our example data for human and yeast from [here](https://emckclac-my.sharepoint.com/:f:/g/personal/k2040209_kcl_ac_uk/Ev9FR2K2kqlKoPpVIpf9Wc0BR_716C_6LyFGfWgqRSuT8Q).
 
 Let us see some example to help make this more clear. As mentioned above `./inucs.py prepare --help` gives the following usage message:
 
