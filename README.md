@@ -1,5 +1,5 @@
 
-# iNucs
+# iNucs: Inter-Nucleosome Interactions
 
 Given a nucleosomes file and a interaction pairs files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them. Here, we discuss the following aspects of `inucs` program:
 
@@ -41,9 +41,9 @@ Or, if you give the script execution permission via `chmod u+x inucs.py`, then s
 
 
 
-As depicted in the figure above, there are two main steps for using `inucs`, namely: `prepare` and `plot`. There is built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
+As depicted in the figure above, using `inucs` involves two main steps: `prepare` and `plot`. There is built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
 
-Overall help:
+For overall help, use the command:
 
 ```bash
 ./inucs.py --help
@@ -57,11 +57,11 @@ usage: inucs.py [-h] [-q] {prepare,plot} ...
 (omitted for brevity...)
 ```
 
-The curly brackets `{}` denote that either of `prepare` or `plot` can be used as commands to the program. The `-h` flag is to print this help message, and `-q` suppresses the program progress output.
+The curly brackets `{}` denote that either of `prepare` or `plot` can be used as a command to the program. The `-h` flag is to print help message, and `-q` suppresses the program progress output.
 
 ### 2.1 The `prepare` Command
 
-In this step, a given potentially large interaction pairs file is broken into smaller pieces and corresponding nucleosome-nucleosome interaction matrices are build.
+In this step, a given potentially large interaction pairs file is broken into smaller pieces and the corresponding nucleosome-nucleosome interaction matrices are build.
 
 To access the built-in help for `prepare` command, issue:
 
@@ -157,13 +157,13 @@ Depending on the size of input files and the system specifications, the `prepare
 
 Also, note that all input files may optionally be in gzip format.
 
-The next step is to produce plots, which we saw its usage above, again using the built-in help `./inucs.py plot --help`:
+The next step is to produce plots, for which the built-in help `./inucs.py plot --help` gives:
 
 ```
 usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <start_region> <end_region>
 ```
 
-Thus, continuing after the `prepare` command above, to get interactions on chromosome `I` in the region between 50000 and 60000, we can use:
+Thus, continuing after the `prepare` command above, to get nucleosome interactions on chromosome `I` in the region between 50000 and 60000, we can use:
 
 
 ```bash
@@ -174,8 +174,7 @@ Thus, continuing after the `prepare` command above, to get interactions on chrom
 
 <img src="docs/plot_I_50000_60000.jpg" alt="plot_I_50000_60000" style="zoom:35%;" />
 
-If the figure does not show automatically you can open it manually. 
-For example, on a **macOS** system, you can use Find to navigate to `yeast_wd`  working directory and them open the plot file. Alternatively, you can simply use appropriate commands in terminal to open the plot file. For example, in **macOS** use:
+After the command plot finishes, the output should open in the default browser. If it doesn't, you can open the `html` output file manually. For example, on a **macOS** system, you can use Find to navigate to `yeast_wd`  working directory and them open the plot file. Alternatively, you can simply use appropriate commands in terminal to open the plot file. For example, in **macOS** use:
 
 ```bash
 open yeast_wd/plot_I_50000_60000.html
@@ -195,7 +194,7 @@ Note that if you are using a **Linux** terminal in **Windows** using [WSL](https
 ------
 ## 3 Algorithms
 
-Given that the input data for `inucs` is expected to be very large, it is quite important to take the required time and space of the underlying algorithms very carefully. For the sake of brevity, here we focus on the algorithms used in the most important parts of `inucs`, which make the program both [efficient](#34-efficiency) and [scalable](#35-scalability), allowing it to deal with very larger datasets.
+Given that the input data for `inucs` is expected to be very large, it is quite important to take the required time and space of the underlying algorithms very carefully. For the sake of brevity, here we focus only on the algorithms used in the most important parts of `inucs`, which make the program both [efficient](#34-efficiency) and [scalable](#35-scalability), allowing it to deal with very larger datasets.
 
 ### 3.1 Input Data Structure
 
@@ -216,7 +215,7 @@ The interaction pairs are also an input to `inucs` (optionally from the [Pairx](
 |      | ch1    | 50182 | ch1    | 50446 | -       | +       |      |
 |      | ...    |       |        |       |         |         |      |
 
-As discussed in the [Scalability](#35-scalability) section below, in order to reduce the amount of data in RAM at any given time, we first break down the interaction pairs input file into chunks based on chromosomes and four orientations (strands ++, --, +-, -+). That means, when handling any given chunk of data, we will be dealing with only one chromosome (i.e., `chrom1==chrom2`), and one orientation. This means that we can further ignore the strands columns above and only work the following columns instead, with one added column, interact_id as an integer id for each interaction pair:
+As discussed in the [Scalability](#35-scalability) section below, in order to reduce the amount of data in RAM at any given time, we first break down the interaction pairs input file into smaller chunks based on chromosomes and four orientations (strands ++, --, +-, -+). That means, when handling any given chunk of data, we will be dealing with only one chromosome (i.e., `chrom1==chrom2`), and one orientation. This means that we can further ignore the strands columns above and only work the following columns instead, with one added column, `interact_id` as an integer id for each interaction pair:
 
 | interact_id | chrom1 | pos1  | chrom2 | pos2  |
 | ----------- | ------ | ----- | ------ | ----- |
@@ -246,7 +245,7 @@ It turns out that carrying out this intermediary step is the most challenging st
 
 **Final Step:**
 
-Next, we can go thorough the last table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
+Next, we can go through the last table above and simply count how many times each pair of `nuc_id1` and `nuc_id2` has repeated.
 
 | nuc_id1 | nuc_id2 | count |
 | ------- | ------- | ----- |
@@ -254,7 +253,7 @@ Next, we can go thorough the last table above and simply count how many times ea
 | 2       | 3       | 1     |
 | ...     |         |       |
 
-The table above is an example of the final count matrix that we were after! If we have this count matrix, then we can go ahead and select any parts of it to plot a *heatmap* for, for example.
+The table above is an example of the final count matrix that we were after! If we have this count matrix, then we can select any parts of it to plot a *heatmap* for, for example.
 
 ### 3.3 Algorithm Explanation
 
@@ -288,7 +287,7 @@ We will discuss two approaches to achieve the intermediary table above.
 
 #### Search-based Algorithm (bad idea!)
 
-One *naïve* approach to compute the intermediary table above is to *search* for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). For example, we can go through all the nucleosomes one by one and look for for the nucleosomes matching each of the two sides of an interaction pair. This will take <img src="https://render.githubusercontent.com/render/math?math=O(n)"> time to go through all nucleosomes, and we have to do that <img src="https://render.githubusercontent.com/render/math?math=O(n)"> times, once for each interaction pair. Thus, in total, it will take quadratic time <img src="https://render.githubusercontent.com/render/math?math=O(n^2)"> time for the naïve algorithm to complete. Keep in mind that *n* can be very large, as for example a typical human interaction pairs file may contain a few billion rows!
+One *naïve* approach to compute the intermediary table above is to *search* for the corresponding nucleosome for each side of a given interaction pair (side1: chrom1 and pos1; side2: chrom2 and pos2). That is, we can go through all the nucleosomes one by one and look for for the nucleosomes matching each of the two sides of an interaction pair. This will take <img src="https://render.githubusercontent.com/render/math?math=O(n)"> time to go through all nucleosomes, and we have to do that <img src="https://render.githubusercontent.com/render/math?math=O(n)"> times, once for each interaction pair. Thus, in total, it will take quadratic time <img src="https://render.githubusercontent.com/render/math?math=O(n^2)"> time for the naïve algorithm to complete. Keep in mind that *n* can be very large, as for example a typical human interaction pairs file may contain a few billion rows!
 
 ***Example 1:*** To get a sense of how much time this may take in practice, let us assume that each step for the algorithm above takes one millisecond and that there are one billion interaction pairs, or n=10<sup>9</sup>. Thus, there will be n<sup>2</sup>=10<sup>18</sup> steps for the naïve algorithm to complete. Let us assume that each step takes one millisecond, so in total the algorithm could take about <img src="https://render.githubusercontent.com/render/math?math=10^18 \times 10^{-3} = 10^15"> seconds to complete. That is more that *31 million years*!
 
