@@ -1,7 +1,7 @@
 
 # iNucs: Inter-Nucleosome Interactions
 
-Given a nucleosomes file and a interaction pairs files produced by the [Pairx](https://github.com/4dn-dcic/pairix) program, the `inucs` command line tool bins interactions falling into different nucleosomes and counts them. Here, we discuss the following aspects of `inucs` program:
+Given nucleosome genomic coordinates, ligation junctions (in pairs format) produced by the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program, the `inucs` command line tool identifies interactions falling into different nucleosomes and counts them. Here, we discuss the following aspects of `inucs` program:
 
 1. [Installation](#1-installation)
 2. [Usage](#2-usage)
