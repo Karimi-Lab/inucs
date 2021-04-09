@@ -207,7 +207,7 @@ The `prepare` command, which does all the heavy lifting for `inucs`, takes in th
 | 3      | ch1   | 50331 | 50471 |
 |        | ...   |       |       |
 
-The interaction pairs are also an input to `inucs` (optionally from the [Pairx](https://github.com/4dn-dcic/pairix) program). The following example table shows the important interaction pairs columns that are used by `inucs`. All other columns are quietly ignored.
+The interaction pairs are also an input to `inucs` (optionally from the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program). The following example table shows the important interaction pairs columns that are used by `inucs`. All other columns are quietly ignored.
 
 | ...  | chrom1 | pos1  | chrom2 | pos2  | strand1 | strand2 | ...  |
 | ---- | ------ | ----- | ------ | ----- | ------- | ------- | ---- |
