@@ -41,7 +41,7 @@ Or, if you give the script execution permission via `chmod u+x inucs.py`, then s
 
 
 
-As depicted in the figure above,  `inucs` running involves two main steps: `prepare` and `plot`. There is a built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
+As depicted in the figure above, running  `inucs` involves two main steps: `prepare` and `plot`. There is a built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
 
 For overall help, use the command:
 
@@ -153,7 +153,7 @@ As the first step, we can preprocess the input data using the following command:
 ./inucs.py prepare chromosomes.txt nucleosomes.txt interactions.txt -d yeast_wd
 ```
 
-Depending on the size of input files and the system specifications, the `prepare` command may take a few minutes, hours to complete.
+Depending on the size of input files and the system specifications, the `prepare` command may take a few minutes to many hours to complete.
 
 Also, note that all input files may optionally be in gzip format.
 
