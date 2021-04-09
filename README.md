@@ -141,19 +141,19 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
 
 > ***EXAMPLE DATA:*** You may download our example data for human and yeast from [here](https://emckclac-my.sharepoint.com/:f:/g/personal/k2040209_kcl_ac_uk/Ev9FR2K2kqlKoPpVIpf9Wc0BR_716C_6LyFGfWgqRSuT8Q).
 
-Let us see some example to help make this more clear. As mentioned above `./inucs.py prepare --help` gives the following usage message:
+As mentioned above `./inucs.py prepare --help` gives the following usage message:
 
 ```
 usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs> <interacts>
 ```
 
-Thus, as the first step, we can preprocess the input data using the following command:
+As the first step, we can preprocess the input data using the following command:
 
 ```bash
 ./inucs.py prepare chromosomes.txt nucleosomes.txt interactions.txt -d yeast_wd
 ```
 
-Depending on the size of input files and the system specifications, the `prepare` command may take a few minutes, hours, or days to complete.
+Depending on the size of input files and the system specifications, the `prepare` command may take a few minutes, hours to complete.
 
 Also, note that all input files may optionally be in gzip format.
 
@@ -163,7 +163,7 @@ The next step is to produce plots, for which the built-in help `./inucs.py plot 
 usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <start_region> <end_region>
 ```
 
-Thus, continuing after the `prepare` command above, to get nucleosome interactions on chromosome `I` in the region between 50000 and 60000, we can use:
+Following the `prepare` command above, we can get nucleosome interactions on chromosome `I` in the region between 50000 and 60000 by running the following command:
 
 
 ```bash
