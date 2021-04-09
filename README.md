@@ -174,7 +174,7 @@ Following the `prepare` command above, we can get nucleosome interactions on chr
 
 <img src="docs/plot_I_50000_60000.jpg" alt="plot_I_50000_60000" style="zoom:35%;" />
 
-After the command plot finishes, the output should open in the default browser. If it doesn't, you can open the `html` output file manually. For example, on a **macOS** system, you can use Find to navigate to `yeast_wd`  working directory and them open the plot file. Alternatively, you can simply use appropriate commands in terminal to open the plot file. For example, in **macOS** use:
+Plots are generated in html format, which can be opened in the default browser. Alternatively, you can simply use appropriate commands in terminal to open the plot file. For example, in **macOS** use:
 
 ```bash
 open yeast_wd/plot_I_50000_60000.html
