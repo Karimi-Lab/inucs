@@ -17,7 +17,7 @@ Given nucleosome genomic coordinates, ligation junctions (in pairs format) produ
 ```bash
 conda install numpy pandas bokeh
 ```
-Then, the fully self-contained python script, [`inucs.py`](./inucs.py), may be directly executed; for example: 
+Then, the fully self-contained python script, [`inucs.py`](./inucs.py), can be directly executed; for example: 
 
 ```bash
 python inucs.py --help
@@ -41,7 +41,7 @@ Or, if you give the script execution permission via `chmod u+x inucs.py`, then s
 
 
 
-As depicted in the figure above, using `inucs` involves two main steps: `prepare` and `plot`. There is built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
+As depicted in the figure above,  `inucs` running involves two main steps: `prepare` and `plot`. There is a built-in help provided for each stage of the program, which are accessible via command line flags `-h` or `--help`.
 
 For overall help, use the command:
 
@@ -61,7 +61,7 @@ The curly brackets `{}` denote that either of `prepare` or `plot` can be used as
 
 ### 2.1 The `prepare` Command
 
-In this step, a given potentially large interaction pairs file is broken into smaller pieces and the corresponding nucleosome-nucleosome interaction matrices are build.
+In this step, a potentially large interaction pairs file is broken into smaller pieces and the corresponding nucleosome-nucleosome interaction matrices are built.
 
 To access the built-in help for `prepare` command, issue:
 
@@ -85,9 +85,9 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
 
     * `<chroms>`: a file listing the chromosomes of interest
 
-    * `<nucs>`: a file containing nucleosomes
+    * `<nucs>`: a file containing nucleosome genomic coordinates
 
-    * `<interacts>`: a file containing interaction pairs produced by the [Pairx](https://github.com/4dn-dcic/pairix) program
+    * `<interacts>`: a file containing interaction pairs produced by the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program
 
       
 
