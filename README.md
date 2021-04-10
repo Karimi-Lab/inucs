@@ -257,7 +257,7 @@ The table above is an example of the final count matrix that we were after. If w
 
 ### 3.3 Algorithm Explanation
 
-Here we would like to discuss only what is computationally most challenging which is carrying out the intermediary step above. 
+Here, we discuss the most challenging computational part of our algorithm, i.e. the intermediary step above. 
 
 To summarize the above example, we have the following two tables:
 
@@ -273,7 +273,7 @@ To summarize the above example, we have the following two tables:
 | ----------- | ------ | ---- | ------ | ---- |
 |             |        |      |        |      |
 
-And we would like to achieve the following **intermediary table** (from which we can relatively easily compute the final counts matrix):
+And our goal is to generate the following **intermediary table** (from which we can compute the final counts matrix):
 
 | interact_id | chrom1 | pos1  | chrom2 | pos2  | nuc_id1 | nuc_id2 |
 | ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
