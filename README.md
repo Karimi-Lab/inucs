@@ -227,11 +227,11 @@ In the next sections, we will discuss these tables further and make use of the e
 
 ### 3.2 High-level Solution Steps
 
-Our ultimate goal is to come up with a square matrix with the size of nucleosomes that specifies how many interaction pairs exist between any given two nucleosomes. Some nucleosome input files (e.g., for humans) may contain well over 10 million nucleosomes. If we would like to store the number of interaction pairs between any two nucleosomes, then we need a count matrix with the size of 10,000,000*10,000,000 or 10<sup>14</sup>. That means, the count matrix will require hundred's of tera bytes of storage! Luckily, however, most entries in the count matrix are zero, which means there is no interactions between most of nucleosomes.  Thus, we can only store the counts that are more than zero in a *sparse matrix*, and consider any unspecified entry to be zero. The example table in **Final Step** below shows such a sparse matrix. In order to come up with that results, we will need to take one more intermediary step.
+Our ultimate goal is to come up with a square matrix with the size of nucleosomes that specifies how many interaction pairs exist between any given two nucleosomes. Some nucleosome input files (e.g., for humans) may contain over 10 million nucleosomes. To store the number of interaction pairs between any two nucleosomes, we need a count matrix with the size of 10,000,000*10,000,000 or 10<sup>14</sup>. This requires hundred's of tera bytes of storage! Luckily, however, most entries in the count matrix are zero and there is no interactions between most of nucleosomes.  Thus, we can only store the counts that are more than zero in a *sparse matrix*, and consider any unspecified entry to be zero. The example table in **Final Step** below shows such a sparse matrix. In order to come up with that sparse matrix, we need to take one more intermediary step.
 
 **Intermediary Step:**
 
-Staring from the last table above, find out that each side of the interaction pairs fall into which nucleosome. For our running example here, we will have:
+This step starts from the last table above, and determines which side of the interaction pairs falls into which nucleosome. For our running example here, we will have:
 
 | interact_id | chrom1 | pos1  | chrom2 | pos2  | *nuc_id1* | *nuc_id2* |
 | ----------- | ------ | ----- | ------ | ----- | --------- | --------- |
@@ -239,7 +239,7 @@ Staring from the last table above, find out that each side of the interaction pa
 | 2           | ch1    | 50182 | ch1    | 50446 | 2         | 3         |
 |             | ...    |       |        |       |           |           |
 
-Note that the last two columns, `nuc_id1` and `nuc_id2`, have been added, with the `nuc_id` values coming from the nucleosomes table above. For example, when `chrom2` is *ch1* and `pos2` is *49971*, `nuc_id2` fall into the second nucleosome for which id is *2*.
+Note that the last two columns, `nuc_id1` and `nuc_id2`, have been added, with the `nuc_id` values coming from the nucleosomes table above. For example, when `chrom2` is *ch1* and `pos2` is *49998*, `nuc_id2` fall into the second nucleosome for which id is *2*.
 
 It turns out that carrying out this intermediary step is the most challenging step computationally. We will discuss this step in more detail below.
 
@@ -253,7 +253,7 @@ Next, we can go through the last table above and simply count how many times eac
 | 2       | 3       | 1     |
 | ...     |         |       |
 
-The table above is an example of the final count matrix that we were after! If we have this count matrix, then we can select any parts of it to plot a *heatmap* for, for example.
+The table above is an example of the final count matrix that we were after. If we have this count matrix, then we can select any parts of it to plot a *heatmap*.
 
 ### 3.3 Algorithm Explanation
 
