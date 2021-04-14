@@ -420,8 +420,6 @@ In short, both algorithms discussed above, namely, binary search based algorithm
 
 ***Example 3:*** In Example 2, we assumed that each step in the binary search based algorithm would take one millisecond, and for one billion interaction pairs, that algorithm could take about 9 million seconds or about *3.5 months* to complete. Now, assume  that the sorting based algorithm takes the same number of steps, but through use of hardware-supported vectorization, each step is performed 100 times faster. That means, instead of 9 million seconds, the sorting based algorithm will take 90,000 seconds or 25 hours. That is, vectorization has helped to reduce the total time needed from about *3.5 months* to about *1 day*.
 
-Interestingly, our empirical comparisons between these two algorithms shows the amount or time improvement between them: almost 100 times speed up (thanks to vectorization).
-
 #### Future Efficiency Improvements:
 
 We are planning for the next version of `inucs` continue to improve the efficiency through different means such as:
