@@ -96,9 +96,9 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
     
     * `<working_dir>`: a folder containing all the intermediary and cached files. These include the resulting matrices with nucleosome-nucleosome interaction counts. Specifying the `<working_dir>` is optional, and if missing, the program will auto-generate a name based on the name of the interactions input file, `<interacts>`.
     
-      If the optional `-z` flag is used, the intermediary files in the `<working_dir>` will be compressed using the `gzip` format.
+      If the optional `-z` flag is used, the intermediary files in the `<working_dir>` will be compressed using the `gzip` format. Please note that while this option helps to save space, it can slow down the program noticeably.
     
-      If the optional `--refresh` flag is used, it starts from scratch and recreates the intermediary files as needed.
+      If the optional `--refresh` flag is used, it starts from scratch and recreates the intermediary files.
 
 
 
