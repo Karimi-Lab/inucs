@@ -6,7 +6,7 @@ Given nucleosome genomic coordinates, ligation junctions (in pairs format) produ
 1. [Installation](#1-installation)
 2. [Usage](#2-usage)
 3. [Algorithms](#3-algorithms)
-4. [Publication](#4-publication)
+4. Publication (manuscript in preparation)
 
 
 ------
