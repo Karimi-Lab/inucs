@@ -6,7 +6,7 @@ Given nucleosome genomic coordinates, ligation junctions (in pairs format) produ
 1. [Installation](#1-installation)
 2. [Usage](#2-usage)
 3. [Algorithms](#3-algorithms)
-4. Publication (manuscript in preparation)
+4. [Publication](#4-publication)
 
 
 ------
@@ -499,3 +499,9 @@ The time for `plot` is about than *3.5 minutes*.
 | Nucleosome interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
 | Time to prepare    | 4 minutes         | 980 minutes (~16  hours) |
 | Time to plot       | 15 seconds        | 3.5 minutes              |
+
+------
+## 4 Publication 
+
+iNucs is currently under review as an application note in Bioinformatics journal (manuscript # BIOINF-2021-0876).
+
