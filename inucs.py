@@ -27,7 +27,8 @@ class S:  # S for Settings
     """ Holds all the Settings and Constants used globally """
     # todo the following constants should be read from a config file
     TESTING_MODE = False
-    OUTPUT_COLS__MATRIX = ['nuc_id1', 'nuc_id2', 'counts']
+    OUTPUT_COLS__MATRIX = \
+        ['nuc_id1', 'nuc_id2', 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'counts', 'distances']
     OUTPUT_COLS__NUC_INTERS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
@@ -440,13 +441,13 @@ class Nucs:
             nucs_file = FILES.working_dir / FILES.input_nucs_file_name
 
         try:
-            df_input = self.read_csv(nucs_file, sep=sep, comment=comment, read_index=read_index)
+            df_nucs = self.read_csv(nucs_file, sep=sep, comment=comment, read_index=read_index)
         except pd.errors.ParserError as parser_error:
             raise InputFileError(nucs_file) from parser_error
 
         self.__name: str = name if name else str(Path(nucs_file).name)
         chrom_list = Chroms(chroms_file, comment=comment).list if chroms_file else None
-        self.__update(df_input, chrom_list, self.name)
+        self.__update(df_nucs, chrom_list, self.name)
 
         if not read_index:
             nucs_file = self.to_csv(output_file=nucs_file)
@@ -461,17 +462,18 @@ class Nucs:
 
     def __update(self, id_chrom_start_end: pd.DataFrame, chrom_list: list = None, name: str = None):
         self.__name = name
-        if 'nuc_id' in id_chrom_start_end.columns:
-            id_chrom_start_end = id_chrom_start_end.set_index('nuc_id')
-        elif 'nuc_id' != id_chrom_start_end.index.name:
-            id_chrom_start_end = id_chrom_start_end.reset_index(drop=True)
-            id_chrom_start_end = id_chrom_start_end.rename_axis('nuc_id')
-
-        # ensuring cols existence and in order, and ignoring extra cols if any
-        self.__nucs = id_chrom_start_end[['chrom', 'start', 'end']]
 
         if chrom_list:  # keep only rows with chrom in chrom_list
-            self.__nucs = self.__nucs.query(f"chrom in {chrom_list}")
+            id_chrom_start_end = id_chrom_start_end.query(f"chrom in {chrom_list}")
+
+        if 'nuc_id' in id_chrom_start_end.columns:
+            id_chrom_start_end = id_chrom_start_end.set_index('nuc_id').sort_index()
+        elif 'nuc_id' != id_chrom_start_end.index.name:  # index name is already 'nuc_id' when selected from regions
+            id_chrom_start_end = id_chrom_start_end.sort_values(['chrom', 'start', 'end'])
+            id_chrom_start_end = id_chrom_start_end.reset_index(drop=True).rename_axis('nuc_id')
+
+        # ensuring cols existence in correct order, and ignoring extra cols if any
+        self.__nucs = id_chrom_start_end[['chrom', 'start', 'end']]
 
         # internal cache to reduce the lookup time for each chrom
         id_chrom_start_end = self.__nucs.reset_index()
@@ -499,7 +501,7 @@ class Nucs:
 
     @property
     def df_nucs(self):
-        return self.__nucs.copy()  # todo efficiency: is copy() needed?
+        return self.__nucs  # .copy()  # not copying for efficiency
 
     def get_nucs(self, chrom) -> pd.DataFrame:
         return self.__chrom_2_nucs[chrom]
@@ -574,7 +576,9 @@ class Nucs:
         df = df.rename({'chr': 'chrom'}, axis=1)
         if read_index:
             if 'nuc_id' in df:
-                df = df.set_index('nuc_id')  # this is just resetting the same nuc_id read from file
+                df = df.set_index('nuc_id').sort_index()
+            else:
+                raise RuntimeError(f"Cannot read index as no column is called 'nuc_id' in {nucs_file}")
         else:
             df = df.sort_values(nucs_cols)  # sorts and ensures cols exist
             df = df.reset_index(drop=True).rename_axis('nuc_id')
@@ -608,7 +612,7 @@ class NucInteras:
             nucs = Nucs()
 
         # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
-        df_nucs = nucs.df_nucs
+        df_nucs = nucs.df_nucs.copy()
         df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
         df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
         self.__nucs__id_chrom_start_end = df_nucs
@@ -677,9 +681,10 @@ class NucInteras:
         except pd.errors.ParserError as parser_error:
             raise InputFileError(input_file) from parser_error
 
-        df_nuc_interas['counts'] = 1  # initially every row is counted as 1
+        df_nuc_interas['counts'] = np.uint16(1)  # initially every row is counted as 1 (unsigned for space efficiency)
+        df_nuc_interas['distances'] = 1  # TODO: calculate distance between interactions
 
-        return df_nuc_interas  # so now: ['nuc_id1', 'nuc_id2', 'counts']
+        return df_nuc_interas  # so now: ['nuc_id1', 'nuc_id2', 'counts', 'distances']
 
     def __create_nuc_interas_files(self):
 
@@ -902,8 +907,8 @@ class NucInteraMatrix:
         LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self)}nucs * {len(self)}nucs.')
         LOGGER.info(self)
 
-    def read_nuc_intera_matrix_region(self, chrom: str, start_region: int, end_region: int,
-                                      orientation='all', extra_cols=False) -> Optional[pd.DataFrame]:
+    def read_nuc_intera_matrix_region(
+            self, chrom: str, start_region: int, end_region: int, orientation='all') -> Optional[pd.DataFrame]:
         """
         :param chrom: e.g. 'II' or 'chrom14'
         :param start_region: positive integer
@@ -911,33 +916,20 @@ class NucInteraMatrix:
         :param orientation:  It can be any of ('+-', '-+', '++', '--') or ('inner', 'outer', 'right', 'left') or
         ('tandem', 'all'). Further, 'p' instead of '+', and 'n' or 'm' instead of '-' are acceptable.
         Default value is 'all' which returns all orientations.
-        :param extra_cols: additionally return 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2'
-        :return: a dense matrix in a DataFrame
+        :return: a submatrix for the region in a DataFrame
         """
 
         nucs = self.__nucs.find_nucs_in_region(chrom, start_region, end_region)
         if nucs is None:
             return None
-        nucs = nucs.df_nucs.sort_index()  # todo efficiency: shouldn't sort once in nucs itself?
 
-        min_nucs_id = nucs.index[0]
-        max_nucs_id = nucs.index[-1]
+        # nucs index is sorted
+        min_nuc_id = nucs.df_nucs.index[0]
+        max_nuc_id = nucs.df_nucs.index[-1]
 
         ijv = self.read_nuc_intera_matrix(chrom, orientation)
-        ijv = ijv.query(f'{min_nucs_id} <= nuc_id1 <= {max_nucs_id}')
-        ijv = ijv.query(f'{min_nucs_id} <= nuc_id2 <= {max_nucs_id}')
-
-        # # now converting sparse matrix ijv to a dense matrix:
-        # submatrix = pd.DataFrame(0, index=nuc_ids, columns=nuc_ids)
-        # submatrix = submatrix.rename_axis(index='nuc_id', columns='nuc_id')
-        #
-        # for _, r in ijv.iterrows():
-        #     submatrix.loc[r.nuc_id1, r.nuc_id2] += r.counts
-
-        if extra_cols:
-            ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id1', right_on='nuc_id')  # suffixes won't work here
-            ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id2', right_on='nuc_id', suffixes=(None, '2'))
-            ijv = ijv.rename(columns={'chrom': 'chrom1', 'start': 'start1', 'end': 'end1'})  # fix col names
+        ijv = ijv.query(f'{min_nuc_id} <= nuc_id1 <= {max_nuc_id}')
+        ijv = ijv.query(f'{min_nuc_id} <= nuc_id2 <= {max_nuc_id}')
 
         return ijv
 
@@ -976,9 +968,11 @@ class NucInteraMatrix:
 
         matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2']).sum().reset_index()  # calculate counts
+        # for groupby aggregates: use 'sum' for some cols and 'first' for the rest
+        aggregates = {col: 'sum' if col in ('counts', 'distances') else 'first' for col in S.OUTPUT_COLS__MATRIX}
+        matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
 
-        matrix_ijv = matrix_ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
+        matrix_ijv = matrix_ijv.apply(pd.to_numeric, downcast='unsigned', errors='ignore')  # for space efficiency
 
         return matrix_ijv
 
@@ -1007,25 +1001,31 @@ class NucInteraMatrix:
 
         return refreshed_files
 
-    @staticmethod
-    def __create_nuc_intera_matrix(df_nuc_inter: pd.DataFrame) -> pd.DataFrame:
+    def __create_nuc_intera_matrix(self, df_nuc_inter: pd.DataFrame) -> pd.DataFrame:
 
         # Goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
-        matrix_ijv = df_nuc_inter
+        ijv = df_nuc_inter
 
-        # make matrix_ijv symmetric
-        swapped = pd.DataFrame(matrix_ijv.values, columns=['nuc_id2', 'nuc_id1', 'counts'])  # swapped cols 2,1 or j,i
-        matrix_ijv = pd.concat([matrix_ijv, swapped], sort=False)  # append ij rows with their swapped ji rows
+        # make ijv symmetric by swapping cols i,j to j,i:  'nuc_id2', 'nuc_id1'
+        swapped = pd.DataFrame(ijv.values, columns=['nuc_id2', 'nuc_id1', 'counts', 'distances'])
+        ijv = pd.concat([ijv, swapped], sort=False)  # append ij rows with their swapped ji rows
 
-        matrix_ijv['counts'] = np.uint16(1)  # set all rows to 1, but using unsigned type for space efficiency
-        matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2']).sum().reset_index()  # calculate counts
+        ijv = ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).sum()  # calculate counts
+        # TODO: DEBUG metrics other than 'distances' OK?
 
-        matrix_ijv = matrix_ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
+        ijv = ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
 
-        diagonal_ids = (matrix_ijv.nuc_id1 == matrix_ijv.nuc_id2)
-        matrix_ijv.loc[diagonal_ids, 'counts'] //= 2  # divide by 2 to fix duplicated diagonal counts
+        diagonal_ids = (ijv.nuc_id1 == ijv.nuc_id2)
+        ijv.loc[diagonal_ids, 'counts'] //= 2  # divide by 2 to fix duplicated diagonal counts
+        ijv.loc[diagonal_ids, 'distances'] //= 2  # divide by 2 to fix duplicated diagonal counts
 
-        return matrix_ijv
+        nucs = self.__nucs.df_nucs
+        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id1', right_on='nuc_id')
+        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id2', right_on='nuc_id', suffixes=('1', '2'))
+
+        ijv = ijv[S.OUTPUT_COLS__MATRIX]  # same columns, just in correct order
+
+        return ijv
 
     @staticmethod
     def schema() -> pd.DataFrame:
@@ -1130,8 +1130,7 @@ class CLI:
             #     output_with_orient = Path(output_with_orient.name + '.txt')
             output_with_orient = FILES.working_dir / f'{output_name}_{orient}.txt'
 
-            submatrix_ijv = matrix.read_nuc_intera_matrix_region(
-                chrom, start_region, end_region, orient, extra_cols=True)
+            submatrix_ijv = matrix.read_nuc_intera_matrix_region(chrom, start_region, end_region, orient)
 
             if submatrix_ijv is None or len(submatrix_ijv) == 0:
                 LOGGER.info(f'\nNo records found for , {output_with_orient}')
@@ -1399,6 +1398,7 @@ class CLI:
         assert S.TESTING_MODE
         LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
+        refresh = ''  # '--refresh'
         chroms_file = r'data/yeast_chromosomes.txt'
         nucs_file = r'data/yeast_nucleosomes.txt'
         interas_file = r'data/yeast_interactions.txt'
