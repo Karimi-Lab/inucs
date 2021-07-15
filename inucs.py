@@ -1261,31 +1261,28 @@ class CLI:
             'description': 'Creates and plots selected sections of nuc-nuc interaction matrices.',
             'title': 'possible commands',
             'help': 'Use one of the commands. Use -h option after any command for more information.',
-            'args': {  # todo --quiet not implemented; see help text below
+            'args': {
                 '--quiet': """
                     Suppress the progress output. Still, a log file will be saved in the working folder.""",
             }
         },
         'prepare': {
             'help': """
-                Creates nuc-nuc interaction matrices, given a chromosomes file,  
+                Creates nuc-nuc interaction matrices, given a chromosomes file,
                 a nucleosomes file, and an interactions file.""",
             'epilog': f"""
                 All the following apply for all input files: 
-                (1) Lines starting with "{S.COMMENT_CHAR}" will be ignored as comments.  
+                (1) Lines starting with "{S.COMMENT_CHAR}" will be ignored as comments.
                 (2) The first non-comment line is interpreted as the header, containing 
                 column names, and must be exactly as specified for each input type. If the first column is 
                 indicated as [id], it means the column is optional and it can have any name 
-                (e.g., "readID" or "nuc_id"). 
+                (e.g., "readID" or "nuc_id").
                 (3) The optional [id] column may or may not be present as the first column. The values in the 
-                optional [id] column will be ignored unless the are unique integers. 
+                optional [id] column will be ignored unless the are unique integers.
                 (4) Values of columns on each line must be separated by a 
-                {S.get_char_name(S.FIELD_SEPARATOR)} character. 
+                {S.get_char_name(S.FIELD_SEPARATOR)} character.
                 (5) Any columns after the mandatory columns will be ignored.
             """,
-            # If the exact expected names are not found in the first non-comment line,
-            # then it will be assumed that there is no header row, and the first row
-            # is read in as data just like the next rows.
             'args': {
                 'chroms_file': """
                     Chromosomes file with one mandatory column "chrom". Any other chromosome names that may appear 
@@ -1295,20 +1292,28 @@ class CLI:
                     (see below).""",
                 'interas_file': """
                     Interactions file with columns: "[id] chrom1 pos1 chrom2 pos2 strand1 strand2" with the [id] column 
-                    being optional (see below). NOTE: The output of the "Pairs" program is accepted as <interas_file> 
+                    being optional (see below). NOTE: The output of the pairtools program is accepted as <interas_file> 
                     without requiring any changes (e.g., the extra columns will be ignored).""",
-                # todo what is the appropriate name to use instead of the "Pairs" program?
                 '--dir': """
                     Optional output folder to store the nuc-nuc interaction matrices (and other files) 
                     into. Without this option, <working_dir> is derived from the name of the 
                     interaction input file, <interas_file>.""",
+                # '--keep-nucs': """
+                #     Adds extra columns in the produced nuc-nuc interaction matrices such that for each nucleosome,
+                #     in addition to its id, there will also be values for "chrom start end".
+                #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
+                #     speed for subsequent operations.""",
+                # '--norm': """
+                #     Adds additional normalization columns in the produced nuc-nuc interaction matrices.
+                #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
+                #     speed for subsequent operations.""",
+                '--zip': """
+                    Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
+                    to write and read files.""",
                 '--refresh': """
                     This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices. 
                     WARNING: Refreshing starts from scratch and may take a long time to complete, 
                     depending on the size of the input data and your hardware specifications.""",
-                '--zip': """
-                    Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
-                    to write and read files.""",
             }
         },
         'plot': {
@@ -1318,7 +1323,7 @@ class CLI:
                 'working_dir': 'This is the folder created by the "prepare" command.',
                 'chrom': """
                     A chromosome, e.g. III or chr21, on which a region is being selected.  
-                    Note that the chrom has to be from those mentioned in <chroms_file> provided  
+                    NOTE: chrom has to be from those mentioned in <chroms_file> provided  
                     to the "prepare" command.""",
                 'start_region': 'A positive integer, representing the start of the region being selected.',
                 'end_region': 'A positive integer, representing the end of the region being selected.',
@@ -1350,7 +1355,7 @@ class CLI:
 
         # # # arguments for main
         c = 'main'
-        a = '--quiet'  # and '-q'   # todo Implement --quiet
+        a = '--quiet'  # and '-q'
         parser_main.add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true')
 
         # # # arguments for commands
@@ -1363,10 +1368,14 @@ class CLI:
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>')
         a = '--dir'  # and '-d'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], metavar='<working_dir>', dest='working_dir')
-        a = '--refresh'  # don't offer -r option to avoid accidentally refreshing
+        # a = '--keep-nucs'  # and '-k'
+        # commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true',dest='keep_nucs')
+        # a = '--norm'  # and '-n'
+        # commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='norm')
+        a = '--zip'  # and '-z'
+        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
+        a = '--refresh'  # don't offer -r option to avoid accidental refreshing
         commands[c].add_argument(a, help=h[c]['args'][a], default=False, action='store_true')
-        a = '--zip'  # not zipped
-        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], dest='zipped', default=False, action='store_true')
 
         c = 'plot'  # c for Command
         a = 'working_dir'  # a for Argument
@@ -1377,13 +1386,11 @@ class CLI:
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>', type=int)
         a = 'end_region'
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>', type=int)
-        a = '--save'
-        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], dest='save_only', default=False, action='store_true')
-        a = '--prefix'
+        a = '--save'  # and '-s'
+        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='save_only')
+        a = '--prefix'  # and '-p'
         commands[c].add_argument(
-            a[1:3], a, help=h[c]['args'][a], metavar='<outfile_prefix>', dest='prefix', default='plot')
-        # a = 'orientation'  # '-o' and '--orientation'
-        # commands[c].add_argument(f'-{a[0]}', f'--{a}', metavar=f'<{a}>', dest=a, help=h[c]['args'][f'--{a}'])
+            a[1:3], a, help=h[c]['args'][a], metavar='<outfile_prefix>', default='plot', dest='prefix')
 
         return parser_main
 
@@ -1405,7 +1412,7 @@ class CLI:
         # testing_args = '--help'
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
-        testing_args = f"prepare --refresh {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
+        testing_args = f"prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
@@ -1470,15 +1477,13 @@ if __name__ == "__main__":
 # done input/output error checking
 # done add a --no-zip flag!
 # done doc: bulleted list. Efficiency; scalability (breaking done: input, matrix, submatrix)
-# TODO doc: graphs:  1) usage pipe line  2) how efficiency is achieved
-# TODO doc: running time measurements (Yeast, Human, PC, HPC)
+# done doc: graphs:  1) usage pipe line  2) how efficiency is achieved
 # done github
-# TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
 # done add Tandem
 # done add to Legend '+-', '-+', '++', '--'
 # done Colors, Font size
-# todo Bokeh, Full GUI app?
 # done Bokeh, default tool? on scroll zoom
+# todo Bokeh, Full GUI app?
 # todo Bokeh, multiple HoverTools (tooltips)
 # todo Bokeh, keep aspect ratio the same as zooming in and out
 # todo Bokeh, resize plot?
@@ -1488,3 +1493,6 @@ if __name__ == "__main__":
 # todo Efficiency, Mem: use categorical data type in DataFrames to reduce the size
 # todo Efficiency, Mem: use memory profiling to see where is highest memory usage
 # todo Efficiency, Mem: check lru_cache memory usage in find_nucs_in_region, for example.
+# todo Is it a good idea to rename "interas" (for interactions) to "pairs"?
+# TODO doc: renew running time measurements (Yeast, Human, PC, HPC)
+# TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
