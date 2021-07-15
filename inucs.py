@@ -340,10 +340,10 @@ class Files:
             index=pd.MultiIndex.from_product([chrom_list, self.__STRAND2ORIENT.keys()], names=['chrom', 'strands']))
         df = df.reset_index()
         df['orientation'] = df.strands.map(self.__STRAND2ORIENT)
-        # df['file'] = self.base_file_name.stem + '.' + df.chrom + '.' + df.orientation + self.base_file_name.suffix
-        # df['file_zip'] = df.file + df.file.map(lambda f: '' if Path(f).suffix == '.gz' else '.gz')
-        suffix = '' if self.base_file_name.suffix == '.gz' else self.base_file_name.suffix  # remove .gz
-        df['file'] = self.base_file_name.stem + '.' + df.chrom + '.' + df.orientation + suffix
+        # suffix = '' if self.base_file_name.suffix == '.gz' else self.base_file_name.suffix  # remove .gz
+        # suffix += suffix if suffix == '.txt' else '.txt'  # add .txt if not already there
+        suffix = '.txt'  # Regardless of what the original suffix was, replace it with .txt
+        df['file'] = self.base_file_name.stem + '_' + df.chrom + '_' + df.orientation + suffix
         df['file_zip'] = df.file + '.gz'
 
         refresh_cols = Files.__STATES.dropna()['refresh_col'].tolist()
@@ -1206,11 +1206,10 @@ class CLI:
         output_name = f'{prefix}_{chrom}_{start_region}_{end_region}'
         submatrices = dict()
         for orient in Files.combined_orientations():  # includes 'all' and 'tandem'
-            # output_with_orient = Path(f'{output_name.stem}_{orient}{output_name.suffix}')
-            output_with_orient = Path(f'{output_name}_{orient}')
-            if output_with_orient.suffix != '.tsv':
-                output_with_orient = Path(output_with_orient.name + '.tsv')
-            output_with_orient = FILES.working_dir / output_with_orient.name
+            # output_with_orient = Path(f'{output_name}_{orient}')
+            # if output_with_orient.suffix != '.txt':
+            #     output_with_orient = Path(output_with_orient.name + '.txt')
+            output_with_orient = FILES.working_dir / f'{output_name}_{orient}.txt'
 
             submatrix_ijv = matrix.read_nuc_intera_matrix_region(
                 chrom, start_region, end_region, orient, extra_cols=True)
