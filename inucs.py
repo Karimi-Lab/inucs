@@ -28,8 +28,9 @@ class S:  # S for Settings
     # todo the following constants should be read from a config file
     TESTING_MODE = False
     OUTPUT_COLS__MATRIX = \
-        ['nuc_id1', 'nuc_id2', 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'counts', 'distances']
-    OUTPUT_COLS__NUC_INTERS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
+        ['nuc_id1', 'nuc_id2', 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2',
+         'counts', 'dist_sum', 'dist_avg']
+    OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
     INPUT_CHUNK_LINES_READ = 1000 * 1000
@@ -677,14 +678,21 @@ class NucInteras:
 
         try:
             df_nuc_interas = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
-                                         usecols=S.OUTPUT_COLS__NUC_INTERS[-2:])  # ['nuc_id1', 'nuc_id2']
+                                         usecols=S.OUTPUT_COLS__NUC_INTERAS)
         except pd.errors.ParserError as parser_error:
             raise InputFileError(input_file) from parser_error
 
-        df_nuc_interas['counts'] = np.uint16(1)  # initially every row is counted as 1 (unsigned for space efficiency)
-        df_nuc_interas['distances'] = 1  # TODO: calculate distance between interactions
+        if not df_nuc_interas.eval("chrom1 == chrom2").all():
+            raise RuntimeError(f"Not all chrom1 and chrom2 values are equal in {input_file}")
 
-        return df_nuc_interas  # so now: ['nuc_id1', 'nuc_id2', 'counts', 'distances']
+        df_nuc_interas['counts'] = 1  # initially every row is counted as 1
+        df_nuc_interas['dist_sum'] = df_nuc_interas.eval('abs(pos1 - pos2)')  # distance between interaction locations
+
+        df_nuc_interas = df_nuc_interas[['nuc_id1', 'nuc_id2', 'counts', 'dist_sum']]  # drop extra columns
+
+        df_nuc_interas = df_nuc_interas.apply(pd.to_numeric, downcast='unsigned')  # to save space
+
+        return df_nuc_interas
 
     def __create_nuc_interas_files(self):
 
@@ -697,6 +705,7 @@ class NucInteras:
             LOGGER.info('No nucleosome interaction files were updated')
             return
 
+        # TODO efficiency: needs multitasking
         for _, file_info in files_needing_refresh.iterrows():
             # if not file_info.needs_refresh:  # get_files_needing_refresh has already checked for this
             #     continue
@@ -770,7 +779,7 @@ class NucInteras:
         # Replace MultiIndex columns with single level, and reorder the columns
         df_nuc_interas.columns = df_nuc_interas.columns.map(
             lambda col_level: ''.join((col_level[0], col_level[1].lstrip('side'))))
-        df_nuc_interas = df_nuc_interas[S.OUTPUT_COLS__NUC_INTERS]
+        df_nuc_interas = df_nuc_interas[S.OUTPUT_COLS__NUC_INTERAS]
         # ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
 
         # todo efficiency: sorting is useful for output files but not needed. Should keep it?
@@ -807,6 +816,7 @@ class NucInteras:
                     working_file = FILES.get_working_files(chrom, orientation, Files.S_INTER).squeeze()
                     if working_file.empty or not working_file.needs_refresh:
                         continue
+                    # TODO efficiency: needs multitasking
                     file = output_files.get(chrom_and_orientation)
                     if file is None:
                         open_file = gzip.open if FILES.zipped else open
@@ -946,7 +956,6 @@ class NucInteraMatrix:
         if working_files.empty:
             return self.__EMPTY
 
-        schema = self.schema()
         matrices = []
         for _, file_info in working_files.iterrows():
             input_file = file_info.subdir / file_info.file
@@ -956,8 +965,7 @@ class NucInteraMatrix:
                     continue
 
             try:
-                matrix_ijv = pd.read_csv(
-                    input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR, usecols=range(schema.columns.size))
+                matrix_ijv = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR)
             except pd.errors.ParserError as parser_error:
                 raise InputFileError(input_file) from parser_error
 
@@ -968,10 +976,12 @@ class NucInteraMatrix:
 
         matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        # for groupby aggregates: use 'sum' for some cols and 'first' for the rest
-        aggregates = {col: 'sum' if col in ('counts', 'distances') else 'first' for col in S.OUTPUT_COLS__MATRIX}
+        # TODO FIXME check for norm columns
+        # for groupby aggregates: use 'first' for all cols, except cols counts and dist_sum for which 'sum' is used
+        aggregates = {col: 'sum' if col in ('counts', 'dist_sum') else 'first' for col in S.OUTPUT_COLS__MATRIX}
         matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
 
+        # TODO FIXME check for norm columns
         matrix_ijv = matrix_ijv.apply(pd.to_numeric, downcast='unsigned', errors='ignore')  # for space efficiency
 
         return matrix_ijv
@@ -991,8 +1001,8 @@ class NucInteraMatrix:
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = file_info.subdir / output_file
             LOGGER.info(f'Creating nuc interaction Matrix file: {output_file}')
-            df_nuc_inter = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
-            df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_inter)
+            df_nuc_intera = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
+            df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera)
             df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
             refreshed_files += 1
             # todo decide about when to keep or remove the cache files
@@ -1001,29 +1011,45 @@ class NucInteraMatrix:
 
         return refreshed_files
 
-    def __create_nuc_intera_matrix(self, df_nuc_inter: pd.DataFrame) -> pd.DataFrame:
+    def __create_nuc_intera_matrix(self, df_nuc_intera: pd.DataFrame) -> pd.DataFrame:
 
         # Goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
-        ijv = df_nuc_inter
+        ijv = df_nuc_intera
 
         # make ijv symmetric by swapping cols i,j to j,i:  'nuc_id2', 'nuc_id1'
-        swapped = pd.DataFrame(ijv.values, columns=['nuc_id2', 'nuc_id1', 'counts', 'distances'])
+        swapped = pd.DataFrame(ijv.values, columns=['nuc_id2', 'nuc_id1', 'counts', 'dist_sum'])
         ijv = pd.concat([ijv, swapped], sort=False)  # append ij rows with their swapped ji rows
 
-        ijv = ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).sum()  # calculate counts
-        # TODO: DEBUG metrics other than 'distances' OK?
+        ijv = ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).sum()  # calc counts and dist_sum
+
+        diagonal_ids = (ijv.nuc_id1 == ijv.nuc_id2)
+        ijv.loc[diagonal_ids, 'counts'] //= 2  # divide by 2 to fix duplicated diagonal values
+        ijv.loc[diagonal_ids, 'dist_sum'] //= 2  # divide by 2 to fix duplicated diagonal values
 
         ijv = ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
 
-        diagonal_ids = (ijv.nuc_id1 == ijv.nuc_id2)
-        ijv.loc[diagonal_ids, 'counts'] //= 2  # divide by 2 to fix duplicated diagonal counts
-        ijv.loc[diagonal_ids, 'distances'] //= 2  # divide by 2 to fix duplicated diagonal counts
-
+        # add nucleosome columns
         nucs = self.__nucs.df_nucs
         ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id1', right_on='nuc_id')
         ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id2', right_on='nuc_id', suffixes=('1', '2'))
 
-        ijv = ijv[S.OUTPUT_COLS__MATRIX]  # same columns, just in correct order
+        col_order = pd.Index(S.OUTPUT_COLS__MATRIX).intersection(ijv.columns)  # keep existing cols but in correct order
+        ijv = ijv[col_order]  # same columns, just in the order specified in S.OUTPUT_COLS__MATRIX
+
+        ijv = self.__norm_nuc_intera_matrix(ijv)  # adds columns for normalized values
+
+        return ijv
+
+    # adds columns for normalized values
+    @staticmethod
+    def __norm_nuc_intera_matrix(ijv: pd.DataFrame) -> pd.DataFrame:
+        # TODO complete normalization methods
+
+        # obs_exp: Observed / Expected
+        # obs_exp_lieberman: Observed / Expected lieberman
+        # obs_exp_non_zero: Observed / Expected non-zero
+
+        ijv = ijv.eval('dist_avg = dist_sum / counts')
 
         return ijv
 
@@ -1398,7 +1424,7 @@ class CLI:
         assert S.TESTING_MODE
         LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
-        refresh = ''  # '--refresh'
+        refresh = ''  # '--refresh'  #
         chroms_file = r'data/yeast_chromosomes.txt'
         nucs_file = r'data/yeast_nucleosomes.txt'
         interas_file = r'data/yeast_interactions.txt'
@@ -1412,7 +1438,7 @@ class CLI:
         # testing_args = '--help'
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
-        testing_args = f"prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
+        testing_args = f"prepare {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
@@ -1496,3 +1522,4 @@ if __name__ == "__main__":
 # todo Is it a good idea to rename "interas" (for interactions) to "pairs"?
 # TODO doc: renew running time measurements (Yeast, Human, PC, HPC)
 # TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
+# TODO add --cache to keep the cache dir and delete it otherwise
