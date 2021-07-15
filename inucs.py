@@ -963,7 +963,7 @@ class NucInteraMatrix:
     """ Nucleosome-Nucleosome Interaction Matrix
 
         Using a sparse matrix where elements are recorded as ijv with
-        i for rows, j for cols, and v or series
+        i for rows, j for cols, and v for values
     """
 
     def __init__(self, nuc_interas: NucInteras, nucs: Nucs, name: str = None):
@@ -985,8 +985,8 @@ class NucInteraMatrix:
                                       orientation='all', extra_cols=False) -> Optional[pd.DataFrame]:
         """
         :param chrom: e.g. 'II' or 'chrom14'
-        :param start_region: positve integer
-        :param end_region: positve integer
+        :param start_region: positive integer
+        :param end_region: positive integer
         :param orientation:  It can be any of ('+-', '-+', '++', '--') or ('inner', 'outer', 'right', 'left') or
         ('tandem', 'all'). Further, 'p' instead of '+', and 'n' or 'm' instead of '-' are acceptable.
         Default value is 'all' which returns all orientations.
@@ -1262,7 +1262,7 @@ class CLI:
 
         full_ijv = pd.concat(matrices.values(), keys=matrices.keys(), names=['orient', None], sort=False)
         full_ijv['log_counts'] = np.log2(full_ijv.counts + 1)  # Plus 1 to avoid log(0)
-        # log_counts_stats = full_ijv.query(f'orient in {Files.orientations()}')['log_counts'].describe()
+        # log_counts_stats = full_ijv.query(f"orient in {Files.orientations()}")['log_counts'].describe()
         log_counts_stats = full_ijv['log_counts'].describe()  # e.g., min and max
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
             legend_label = '' if orient == 'all' else ' (' + ','.join(FILES.get_strands(orient)) + ')'
@@ -1425,7 +1425,7 @@ class CLI:
 
         # # # Create the UI commands
         commands = dict()
-        for c in ['prepare', 'plot']:  # disabling some commands for now ['prepare', 'select', 'plot', 'selplot']:
+        for c in ['prepare', 'plot']:  # disabling some commands for now ['prepare', 'select', 'plot']:
             commands[c] = subparsers.add_parser(c, help=h[c]['help'], description=h[c]['help'], epilog=h[c]['epilog'])
 
         # # # arguments for main
@@ -1483,7 +1483,7 @@ class CLI:
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
         testing_args = f'prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}'
-        # testing_args = f'plot {working_dir} II 1 50000 --prefix my_plot'
+        # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         arguments = parser.parse_args(testing_args.split())  # for debugging
 
         return arguments
@@ -1547,7 +1547,7 @@ if __name__ == "__main__":
 # done reverse y axis
 # done input/output error checking
 # done add a --no-zip flag!
-# done doc: bulleted list. Efficiency; scalability (breaking done: input, matrix, submatix)
+# done doc: bulleted list. Efficiency; scalability (breaking done: input, matrix, submatrix)
 # TODO doc: graphs:  1) usage pipe line  2) how efficiency is achieved
 # TODO doc: running time measurements (Yeast, Human, PC, HPC)
 # done github
