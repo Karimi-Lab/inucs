@@ -79,7 +79,7 @@ class Files:
     }).set_index('state')
 
     __CONFIG_FILE = 'last_run.ini'
-    __OUT_SUFFIX = '.inucs'
+    __WORKING_DIR_SUFFIX = '.inucs'
 
     def __init__(self, base_file_name=None, working_dir=None, refresh: bool = False, zipped: bool = True):
         self.__working_files: pd.DataFrame = pd.DataFrame()  # will be reset by reset_working_files
@@ -93,19 +93,19 @@ class Files:
 
         self.__zipped = zipped
 
-        suffix = self.__OUT_SUFFIX
+        wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
             self.__base_file_name = Path(base_file_name)
             self.__working_dir = Path(working_dir)
         elif base_file_name:  # then working_dir is None, so determine it
             self.__base_file_name = Path(base_file_name)
-            self.__working_dir = Path('.') / (self.__base_file_name.name + suffix)
+            self.__working_dir = Path('.') / (self.__base_file_name.name + wd_suffix)
         elif working_dir:  # then base_file_name is None, so determine it
             self.__working_dir = Path(working_dir)
             interas_file = self.input_interas_file_name
             if interas_file is None:
                 wd = self.__working_dir
-                self.__base_file_name = wd.stem if wd.suffix == suffix else wd
+                self.__base_file_name = wd.stem if wd.suffix == wd_suffix else wd
             else:
                 self.__base_file_name = interas_file
         else:
@@ -144,7 +144,8 @@ class Files:
 
     def iter_working_files(self):
         df = self.__working_files.copy()
-        df = df[self.__IMP_COLS.drop(['needs_refresh', 'subdir'])]  # dropping cols that depend on state and unspecified
+        important_cols = self.__IMP_COLS.drop(['needs_refresh', 'subdir'])
+        df = df[important_cols]  # dropping cols that depend on state or are unspecified
         for _, file_info in df.iterrows():
             yield file_info
 
@@ -343,7 +344,7 @@ class Files:
         # df['file_zip'] = df.file + df.file.map(lambda f: '' if Path(f).suffix == '.gz' else '.gz')
         suffix = '' if self.base_file_name.suffix == '.gz' else self.base_file_name.suffix  # remove .gz
         df['file'] = self.base_file_name.stem + '.' + df.chrom + '.' + df.orientation + suffix
-        df['file_zip'] = df.file + '.gz'  # todo remove: after adding --zip flag, file_zip is not needed anymore
+        df['file_zip'] = df.file + '.gz'
 
         refresh_cols = Files.__STATES.dropna()['refresh_col'].tolist()
         df[refresh_cols] = True  # makes three bool columns for file refreshing
@@ -426,8 +427,9 @@ class Nucs:
 
     def __init__(self, nucs_file=None, chroms_file=None, name: str = None,
                  sep: chr = S.FIELD_SEPARATOR, comment: str = S.COMMENT_CHAR, load_nucs_file=True):
-        self.__chrom_2_id_chrom_start_end: dict = {}
-        self.__id_chrom_start_end: pd.DataFrame = self.schema()
+
+        self.__nucs: pd.DataFrame = self.schema()  # nucs is a table with cols: nuc_id,chrom,start,end
+        self.__chrom_2_nucs: dict = {}
 
         if not load_nucs_file:
             return
@@ -467,14 +469,14 @@ class Nucs:
             id_chrom_start_end = id_chrom_start_end.rename_axis('nuc_id')
 
         # ensuring cols existence and in order, and ignoring extra cols if any
-        self.__id_chrom_start_end = id_chrom_start_end[['chrom', 'start', 'end']]
+        self.__nucs = id_chrom_start_end[['chrom', 'start', 'end']]
 
         if chrom_list:  # keep only rows with chrom in chrom_list
-            self.__id_chrom_start_end = self.__id_chrom_start_end.query(f"chrom in {chrom_list}")
+            self.__nucs = self.__nucs.query(f"chrom in {chrom_list}")
 
         # internal cache to reduce the lookup time for each chrom
-        id_chrom_start_end = self.__id_chrom_start_end.reset_index()
-        self.__chrom_2_id_chrom_start_end = \
+        id_chrom_start_end = self.__nucs.reset_index()
+        self.__chrom_2_nucs = \
             {k: v.set_index('nuc_id') for k, v in id_chrom_start_end.groupby('chrom')}
 
         return self
@@ -494,35 +496,35 @@ class Nucs:
 
     @property
     def chrom_list(self) -> list:
-        return list(self.__chrom_2_id_chrom_start_end.keys())
+        return list(self.__chrom_2_nucs.keys())
 
     @property
-    def id_chrom_start_end(self):
-        return self.__id_chrom_start_end.copy()  # todo efficiency: is copy() needed?
+    def df_nucs(self):
+        return self.__nucs.copy()  # todo efficiency: is copy() needed?
 
     def get_nucs(self, chrom) -> pd.DataFrame:
-        return self.__chrom_2_id_chrom_start_end[chrom]
+        return self.__chrom_2_nucs[chrom]
 
     def iter_nucs(self):
-        return self.__id_chrom_start_end.iterrows()
+        return self.__nucs.iterrows()
 
     def iter_chroms(self):
-        return iter(self.__chrom_2_id_chrom_start_end.keys())
+        return iter(self.__chrom_2_nucs.keys())
 
     def iter_chrom_and_nucs(self):
-        return iter(self.__chrom_2_id_chrom_start_end.items())
+        return iter(self.__chrom_2_nucs.items())
 
     def __len__(self):
-        return len(self.__id_chrom_start_end)
+        return len(self.__nucs)
 
     def __repr__(self):
         return self.name + '\n' + \
-               str(self.__id_chrom_start_end.head(2)) + '\n...\n(' + \
-               str(self.__id_chrom_start_end.shape[0]) + ' nucleosomes)'
+               str(self.__nucs.head(2)) + '\n...\n(' + \
+               str(self.__nucs.shape[0]) + ' nucleosomes)'
 
     @functools.lru_cache
     def find_nuc_id(self, chrom, pos):
-        df = self.__chrom_2_id_chrom_start_end[chrom]
+        df = self.__chrom_2_nucs[chrom]
         i = df.start.searchsorted(pos)
         if i == len(df) or (i > 0 and pos != df.at[df.index[i], 'start']):
             i -= 1
@@ -533,11 +535,11 @@ class Nucs:
     @functools.lru_cache
     def find_nuc(self, chrom, pos):
         id_, found = self.find_nuc_id(chrom, pos)
-        return self.__id_chrom_start_end.iloc[id_, :] if found else None
+        return self.__nucs.iloc[id_, :] if found else None
 
     @functools.lru_cache
     def find_nucs_in_region(self, chrom, start_region, end_region) -> Optional['Nucs']:
-        if chrom not in self.__chrom_2_id_chrom_start_end:
+        if chrom not in self.__chrom_2_nucs:
             return None
 
         if start_region > end_region:  # swap if in the wrong order
@@ -545,7 +547,7 @@ class Nucs:
 
         start_id, _ = self.find_nuc_id(chrom, start_region)
         end_id, _ = self.find_nuc_id(chrom, end_region)
-        nucs_in_region = self.__id_chrom_start_end.iloc[start_id:end_id + 1, :]
+        nucs_in_region = self.__nucs.iloc[start_id:end_id + 1, :]
 
         region_name = f'{self.name} ({chrom}:{start_region}->{end_region})'
         return Nucs.from_dataframe(nucs_in_region, region_name)
@@ -585,7 +587,7 @@ class Nucs:
 
     def to_csv(self, output_file=None, sep=S.FIELD_SEPARATOR, index: bool = True):
         output_file = FILES.fix_file_zip_suffix(output_file if output_file else self.name)
-        self.__id_chrom_start_end.to_csv(
+        self.__nucs.to_csv(
             FILES.fullpath(output_file), sep=sep, index=index, header=True)
         return output_file
 
@@ -607,7 +609,7 @@ class NucInteras:
             nucs = Nucs()
 
         # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
-        df_nucs = nucs.id_chrom_start_end
+        df_nucs = nucs.df_nucs
         df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
         df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
         self.__nucs__id_chrom_start_end = df_nucs
@@ -688,7 +690,7 @@ class NucInteras:
         # decide if need to continue
         files_needing_refresh = FILES.get_files_needing_refresh(Files.S_NUC_INTER)
         if files_needing_refresh.empty:
-            LOGGER.info('\nNo nucleosome interaction files were updated')
+            LOGGER.info('No nucleosome interaction files were updated')
             return
 
         for _, file_info in files_needing_refresh.iterrows():
@@ -700,7 +702,7 @@ class NucInteras:
             if not input_file.exists():
                 input_file = subdir_inter / file_info.file_zip  # check if the zip version exists
                 if not input_file.exists():
-                    LOGGER.warning(f'\nSkipping cache file. File not found: {file_info.file}.')
+                    LOGGER.warning(f'Skipping cache file. File not found: {file_info.file}')
                     continue
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = subdir_nuc_inter / output_file
@@ -997,7 +999,7 @@ class NucInteraMatrix:
         nucs = self.__nucs.find_nucs_in_region(chrom, start_region, end_region)
         if nucs is None:
             return None
-        nucs = nucs.id_chrom_start_end.sort_index()  # todo efficiency: shouldn't sort once in nucs itself?
+        nucs = nucs.df_nucs.sort_index()  # todo efficiency: shouldn't sort once in nucs itself?
 
         min_nucs_id = nucs.index[0]
         max_nucs_id = nucs.index[-1]
@@ -1472,17 +1474,16 @@ class CLI:
         LOGGER.debug('WARNING: Using TESTING mode!!')
         # # # for development only:
         # chroms_file = 'Chromosomes_Human.txt'
-        chroms_file = r'last_version\Chromosomes_Yeast.txt'
-        nucs_file = r'last_version\Nucleosomes_Yeast.txt'
-        # interas_file = r'C:\Temp\Orientation\cat\A1-3NC-972-form_S7_R1_2_001_ALL.txt'
-        interas_file = r'last_version\Yeast.tsv.gz'
-        working_dir = 'Yeast-win'
+        chroms_file = r'Chromosomes_Yeast.txt'
+        nucs_file = r'Nucleosomes_Yeast.txt'
+        interas_file = r'Yeast.tsv'
+        working_dir = 'Yeast-testing'
 
         # testing_args = ''
         # testing_args = '--help'
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
-        testing_args = f'prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}'
+        testing_args = f"prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         arguments = parser.parse_args(testing_args.split())  # for debugging
 
@@ -1496,12 +1497,15 @@ def main():
 
     commandline_parser = CLI.create_commandline_parser()
 
-    # for testing only
-    import platform
-    if platform.system() == 'Windows':
-        args = CLI.test_parse_args(commandline_parser)  # for testing only
-    else:
-        args = commandline_parser.parse_args()  # the actual line
+    # # for testing only
+    # import platform
+    # if platform.system() == 'Windows':
+    #     args = CLI.test_parse_args(commandline_parser)  # for testing only
+    # else:
+    #     args = commandline_parser.parse_args()  # the actual line
+
+    # args = CLI.test_parse_args(commandline_parser)  # for testing only
+    args = commandline_parser.parse_args()  # the actual line
 
     if not args.quiet:
         handler_stdout = logging.StreamHandler(sys.stdout)
