@@ -28,6 +28,7 @@ from pandas.errors import EmptyDataError
 class S:  # S for Settings
     """ Holds all the Settings and Constants used globally """
     # todo the following constants should be read from a config file
+    TESTING_MODE = False
     OUTPUT_COLS__MATRIX = ['nuc_id1', 'nuc_id2', 'counts']
     OUTPUT_COLS__NUC_INTERS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
@@ -1470,20 +1471,25 @@ class CLI:
 
     @staticmethod
     def test_parse_args(parser):
-        LOGGER.debug('WARNING: Using TESTING mode!!')
+        assert S.TESTING_MODE
+        LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
-        # chroms_file = 'Chromosomes_Human.txt'
-        chroms_file = r'Chromosomes_Yeast.txt'
-        nucs_file = r'Nucleosomes_Yeast.txt'
-        interas_file = r'Yeast.tsv'
-        working_dir = 'Yeast-testing'
+        chroms_file = r'data/yeast_chromosomes.txt'
+        nucs_file = r'data/yeast_nucleosomes.txt'
+        interas_file = r'data/yeast_interactions.txt'
+        working_dir = r'wd/yeast'
+        # chroms_file = r'data/human_chromosomes.txt'
+        # nucs_file = r'data/human_nucleosomes.txt'
+        # interas_file = r'data_local/4DNFI1O6IL1Q.pairs.100m'
+        # working_dir = r'wd/hi100m'
 
         # testing_args = ''
         # testing_args = '--help'
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
-        testing_args = f"prepare {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
+        testing_args = f"prepare --refresh {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
+        LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
 
         return arguments
@@ -1496,15 +1502,10 @@ def main():
 
     commandline_parser = CLI.create_commandline_parser()
 
-    # # for testing only
-    # import platform
-    # if platform.system() == 'Windows':
-    #     args = CLI.test_parse_args(commandline_parser)  # for testing only
-    # else:
-    #     args = commandline_parser.parse_args()  # the actual line
-
-    # args = CLI.test_parse_args(commandline_parser)  # for testing only
-    args = commandline_parser.parse_args()  # the actual line
+    if S.TESTING_MODE:
+        args = CLI.test_parse_args(commandline_parser)  # for testing only
+    else:
+        args = commandline_parser.parse_args()  # the actual line
 
     if not args.quiet:
         handler_stdout = logging.StreamHandler(sys.stdout)
