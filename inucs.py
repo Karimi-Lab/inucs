@@ -9,10 +9,8 @@ import copy
 import functools
 import gzip
 import logging
-import mimetypes
 import pprint
 import shutil
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -780,86 +778,6 @@ class NucInteras:
         if FILES.get_files_needing_refresh(Files.S_INTER).empty:
             LOGGER.info('\nNo interaction cache files were updated')
             return
-
-        bash_available = self.__split_interas_file__bash()
-        if not bash_available:
-            LOGGER.warning(
-                '\nNOTE: Could not find "bash" on this system, so falling back to an alternative '
-                'approach, which is slower. Using a system with bash (e.g., Linux or macOS) can '
-                'speed up the process of preparing internal cache files.')
-            self.__split_interas_file__python()
-
-    def __split_interas_file__bash(self) -> bool:
-        """
-        :returns: false if "bash" is not available and true if the bash script has successfully executed
-        """
-
-        try:  # first make sure that bash is available
-            process = subprocess.Popen(
-                '/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        except FileNotFoundError:
-            return False
-
-        header_line_num, used_cols = self.__validate_interas_file(self.__interas_file)
-
-        sep = S.FIELD_SEPARATOR
-
-        # start with files that need to be (re)created
-        df = FILES.get_files_needing_refresh(Files.S_INTER)
-        if df.empty:
-            return True
-
-        # create subcommands for filtering input records:
-        df['strands_match'] = df.strands.map(lambda strand_tuple: '\\' + (sep + '\\').join(strand_tuple))
-        df['awk'] = "awk '/^" + df.chrom + sep + ".*" + sep + df.strands_match + "$/'"
-        if FILES.zipped:
-            df['filtering'] = '>(' + df.awk + ' | gzip > ' + df.file_zip + ') \\'
-        else:
-            # files_with_no_zip_suffix = df.file.map(FILES.fix_file_zip_suffix)
-            # df['filtering'] = '>(' + df.awk + ' > ' + files_with_no_zip_suffix + ') \\'
-            df['filtering'] = '>(' + df.awk + ' > ' + df.file + ') \\'
-        filtering_subcommands = '\n'.join(df['filtering'].to_list()) + '\n'
-
-        # subdir = FILES.get_subdir(Files.S_INTER)
-        subdir = df.head(1).subdir.squeeze()  # read subdir from first row, which is the same here for all rows
-
-        # create the complete bash command lines to split the input interaction file
-        command_lines = f'cd "{subdir}" \n'
-        command_lines += f'cat "{self.__interas_file}" \\\n'
-        command_lines += ' | gunzip ' if mimetypes.guess_type(self.__interas_file)[1] == 'gzip' else ''
-        command_lines += f" | grep -v '^{S.COMMENT_CHAR}'"
-        command_lines += '' if header_line_num is None else f" | tail -n +{header_line_num + 2}"
-        command_lines += f" | cut -f{','.join((1 + used_cols.index).map(str))}"
-        command_lines += f" | awk '${'==$'.join((1 + S.CHROM_COLS.index).map(str))}'"
-        command_lines += ' | tee \\\n' + filtering_subcommands
-        command_lines += '> /dev/null'
-
-        # COMMENT: In filtering_subcommands above, using "awk" instead of "grep" for filtering
-        # made almost no difference in terms of performance in our benchmarking, but the regex
-        # code for awk seems cleaner than grep (e.g., how '+' is treated)
-
-        LOGGER.info(f'\nSplitting input file: {self.__interas_file} \n')
-        LOGGER.debug(command_lines)
-
-        out, err = process.communicate(command_lines)
-        if err:
-            raise RuntimeError(err)
-
-        LOGGER.info(out)
-
-        FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
-
-        # delete any empty csv files which may have been created by the bash script above
-        for file in subdir.iterdir():
-            if file.is_file():
-                try:  # an easy trick to detect zipped empty files (which have a size > 0 so are hard to detect)
-                    pd.read_csv(file, nrows=1)  # try to read 1 line
-                except EmptyDataError:
-                    file.unlink()  # remove file if it has no data
-
-        return True
-
-    def __split_interas_file__python(self):
 
         header_line_num, used_cols = self.__validate_interas_file(self.__interas_file)
 
