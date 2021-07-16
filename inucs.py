@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -83,17 +83,19 @@ class Files:
     __CONFIG_FILE = 'last_run.ini'
     __WORKING_DIR_SUFFIX = '.inucs'
 
-    def __init__(self, base_file_name=None, working_dir=None, refresh: bool = False, zipped: bool = True):
+    def __init__(self, base_file_name=None, working_dir=None, zipped=True, keep_cache=False, refresh=False):
         self.__working_files: pd.DataFrame = pd.DataFrame()  # will be reset by reset_working_files
         self.__base_file_name = base_file_name
         self.__working_dir = working_dir
         self.__zipped = zipped
+        self.__keep_cache = keep_cache
         self.__config = configparser.ConfigParser()
         self.reset_all(base_file_name, working_dir, refresh, zipped)
 
-    def reset_all(self, base_file_name=None, working_dir=None, refresh: bool = False, zipped: bool = True):
+    def reset_all(self, base_file_name=None, working_dir=None, zipped=True, keep_cache=False, refresh=False):
 
         self.__zipped = zipped
+        self.__keep_cache = keep_cache
 
         wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
@@ -213,6 +215,11 @@ class Files:
     def zipped(self) -> bool:
         """Is output zipped?"""
         return self.__zipped
+
+    @property
+    def keep_cache(self) -> bool:
+        """If False, the cache subdirectory will be removed after preparation of matrices."""
+        return self.__keep_cache
 
     @classmethod
     def orientations(cls) -> list:
@@ -659,7 +666,7 @@ class NucInteras:
             nuc_interas = self.read_nuc_inter(file_info.chrom, file_info.orientation)
             yield nuc_interas  # todo test to see it's ok where nuc_interas.empty is True
 
-    def read_nuc_inter(self, chrom: str, orientation: str) -> pd.DataFrame:
+    def read_nuc_inter(self, chrom: str, orientation: str) -> Tuple[pd.DataFrame, Path]:
         """
         :param chrom: e.g. 'II' or 'chrom14'
         :param orientation:  It can be any of ('+-', '-+', '++', '--') or ('Inner', 'Outer', 'Right', 'Left')
@@ -693,7 +700,7 @@ class NucInteras:
 
         df_nuc_interas = df_nuc_interas.apply(pd.to_numeric, downcast='unsigned')  # to save space
 
-        return df_nuc_interas
+        return df_nuc_interas, input_file
 
     def __create_nuc_interas_files(self):
 
@@ -724,10 +731,11 @@ class NucInteras:
             df_interas = self.__read_interas_file(input_file)
             df_nuc_interas = self.__create_nuc_interas(df_interas, file_info.chrom)
             df_nuc_interas.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
-            try:
-                Path(input_file).unlink()  # remove the cached input_file
-            except Exception as e:
-                LOGGER.error(e)
+            if not FILES.keep_cache:
+                try:
+                    Path(input_file).unlink()  # remove the cached input_file to reduce runtime space requirements
+                except Exception as e:
+                    LOGGER.error(e)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
         # files.__working_files[refresh_col] = False  # flag all as done
@@ -1002,11 +1010,15 @@ class NucInteraMatrix:
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = file_info.subdir / output_file
             LOGGER.info(f'Creating nuc interaction Matrix file: {output_file}')
-            df_nuc_intera = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
+            df_nuc_intera, input_file = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
             df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera)
             df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
             refreshed_files += 1
-            # todo decide about when to keep or remove the cache files
+            if not FILES.keep_cache:
+                try:
+                    Path(input_file).unlink()  # remove the cached input_file to reduce runtime space requirements
+                except Exception as e:
+                    LOGGER.error(e)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_MATRIX)
 
@@ -1109,10 +1121,13 @@ class CLI:
             print(out)
 
     @classmethod
-    def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir, refresh, zipped):
+    def handler_prepare_command(
+            cls, command, chroms_file, nucs_file, interas_file, working_dir, zipped, keep_cache, refresh):
+
         start = timer()
 
-        FILES.reset_all(base_file_name=interas_file, working_dir=working_dir, refresh=refresh, zipped=zipped)
+        FILES.reset_all(
+            base_file_name=interas_file, working_dir=working_dir, zipped=zipped, keep_cache=keep_cache, refresh=refresh)
 
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
@@ -1142,7 +1157,19 @@ class CLI:
         if len(nuc_intera_matrix) == 0:
             LOGGER.warning('\nWARNING: The produced matrix is empty!')
 
+        cache_dir = FILES.working_dir / 'cache'
         LOGGER.info(f'\nPrepared working directory: {FILES.working_dir}')
+        if FILES.keep_cache:
+            LOGGER.info('\nThe cache files have not been removed automatically. ')
+            LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
+        else:
+            try:
+                if cache_dir.exists():
+                    shutil.rmtree(cache_dir)  # remove the cache dir
+            except Exception as e:
+                LOGGER.error(e)
+                LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
+
         LOGGER.info(f"\n = = = = = Finished command '{command}' in {round((timer() - start) / 60.0, 1)} minutes")
 
     @classmethod
@@ -1160,9 +1187,7 @@ class CLI:
         LOGGER.info(f'Logging to file {log_file_name}.\n')
 
         nucs = Nucs()  # loads nucs from the working directory
-
         nuc_interas = NucInteras(nucs=nucs, refresh=False)
-
         matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs)
 
         # output_name = Path(Path(output_name).name)  # dismiss the path to just save in working dir
@@ -1180,7 +1205,7 @@ class CLI:
             if submatrix_ijv is None or len(submatrix_ijv) == 0:
                 LOGGER.info(f'\nNo records found for , {output_with_orient}')
             else:
-                submatrix_ijv.to_csv(output_with_orient, S.FIELD_SEPARATOR, header=True, index=True)
+                submatrix_ijv.to_csv(output_with_orient, S.FIELD_SEPARATOR, header=True, index=False)
                 submatrices[orient] = submatrix_ijv
                 LOGGER.info(f'{len(submatrix_ijv)} lines saved to file:  {output_with_orient}')
 
@@ -1354,7 +1379,7 @@ class CLI:
                     Optional output folder to store the nuc-nuc interaction matrices (and other files) 
                     into. Without this option, <working_dir> is derived from the name of the 
                     interaction input file, <interas_file>.""",
-                # '--keep-nucs': """
+                # '--nucs-info': """
                 #     Adds extra columns in the produced nuc-nuc interaction matrices such that for each nucleosome,
                 #     in addition to its id, there will also be values for "chrom start end".
                 #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
@@ -1366,6 +1391,11 @@ class CLI:
                 '--zip': """
                     Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
                     to write and read files.""",
+                '--cache': """
+                    While computing the nuc-nuc matrices, there are many intermediate files that are produces and are
+                    removed at the end. The option --cache instructs the program to keep these intermediate files
+                    (in the "cache" subdirectory) which might prove useful for some downstream analysis. 
+                    NOTE: keeping cache files increases the amount of disk space requirements significantly.""",
                 '--refresh': """
                     This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices. 
                     WARNING: Refreshing starts from scratch and may take a long time to complete, 
@@ -1434,6 +1464,8 @@ class CLI:
         # commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='norm')
         a = '--zip'  # and '-z'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
+        a = '--cache'  # and '-c'
+        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='keep_cache')
         a = '--refresh'  # don't offer -r option to avoid accidental refreshing
         commands[c].add_argument(a, help=h[c]['args'][a], default=False, action='store_true')
 
@@ -1459,7 +1491,8 @@ class CLI:
         assert S.TESTING_MODE
         LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
-        refresh = ''  # '--refresh'  #
+        cache = '--cache'
+        refresh = ''  # '--refresh'
         chroms_file = r'data/yeast_chromosomes.txt'
         nucs_file = r'data/yeast_nucleosomes.txt'
         interas_file = r'data/yeast_interactions.txt'
@@ -1473,7 +1506,7 @@ class CLI:
         # testing_args = '--help'
         # testing_args = 'prepare --help'
         # testing_args = 'plot --help'
-        testing_args = f"prepare {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
+        testing_args = f"prepare {cache} {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
@@ -1558,4 +1591,3 @@ if __name__ == "__main__":
 # todo Is it a good idea to rename "interas" (for interactions) to "pairs"?
 # TODO doc: renew running time measurements (Yeast, Human, PC, HPC)
 # TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
-# TODO add --cache to keep the cache dir and delete it otherwise
