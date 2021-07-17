@@ -1055,14 +1055,27 @@ class NucInteraMatrix:
 
     # adds columns for normalized values
     @staticmethod
-    def __norm_nuc_intera_matrix(ijv: pd.DataFrame) -> pd.DataFrame:
-        # TODO complete normalization methods
+    def __norm_nuc_intera_matrix(ijv: pd.DataFrame, dist_window_size=100) -> pd.DataFrame:
+        # Observed / Expected non zero
+        # Expected values are the sum per genomic distance divided by sum of non-zero contacts.
+        # Only non-zero values are used to compute the expected values per genomic distance.
+        # https://hicexplorer.readthedocs.io/en/latest/content/tools/hicTransform.html#observed-expected-non-zero
 
-        # obs_exp: Observed / Expected
-        # obs_exp_lieberman: Observed / Expected lieberman
-        # obs_exp_non_zero: Observed / Expected non-zero
+        # # High-level goal:
+        # Find all nucs with same genomic distances, sum up the counts, divide by number of rows (m 6.57)
+        # That is, for each genomic distance window, calculate the number of interactions per nucleosome contact
 
-        ijv = ijv.eval('dist_avg = dist_sum / counts')
+        def num_interas_per_nuc_contact(counts_in_dist_window):
+            return counts_in_dist_window.sum() / len(counts_in_dist_window)  # num of interactions per nuc contact (row)
+
+        ijv['dist_avg'] = ijv.eval("dist_sum / counts")
+        ijv['dist_window'] = ijv['dist_avg'].floordiv(dist_window_size)
+        ijv['exp_value'] = ijv.groupby('dist_window')['counts'].transform(num_interas_per_nuc_contact)
+        ijv['norm_counts'] = ijv.eval("counts / exp_value")
+        ijv['norm_counts_scaled'] = ijv.eval("norm_counts / norm_counts.mean() * counts.mean()")
+
+        # todo: delete this line:
+        LOGGER.debug(ijv[['counts', 'norm_counts', 'norm_counts_scaled']].describe())
 
         return ijv
 
@@ -1544,19 +1557,6 @@ def main():
 
     command_handler(**vars(args))  # call the selected handler with all the arguments from commandline
 
-    # # before exiting the program, remove the log file if it's empty
-    # @atexit.register
-    # def cleanup_tasks():
-    #     for log_handler in iter(logger.handlers):
-    #         log_handler.flush()
-    #         log_handler.close()
-    #
-    #     if Path(log_file_name).stat().st_size == 0:
-    #         Path(log_file_name).unlink()
-    #         # todo Should remove working dir IF empty?
-
-    pass
-
 
 if __name__ == "__main__":
     LOGGER = logging.getLogger()
@@ -1583,11 +1583,8 @@ if __name__ == "__main__":
 # todo Bokeh, keep aspect ratio the same as zooming in and out
 # todo Bokeh, resize plot?
 # todo Efficiency: use parallelism to utilize multicore CPUs
-# todo Efficiency: in __split_interas_file__python Capture Repeated Group for chr1==chr2. E.g., see:
-# https://www.regular-expressions.info/captureall.html
 # todo Efficiency, Mem: use categorical data type in DataFrames to reduce the size
 # todo Efficiency, Mem: use memory profiling to see where is highest memory usage
 # todo Efficiency, Mem: check lru_cache memory usage in find_nucs_in_region, for example.
-# todo Is it a good idea to rename "interas" (for interactions) to "pairs"?
 # TODO doc: renew running time measurements (Yeast, Human, PC, HPC)
 # TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
