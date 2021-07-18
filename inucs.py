@@ -28,9 +28,10 @@ class S:  # S for Settings
     """ Holds all the Settings and Constants used globally """
     # todo the following constants should be read from a config file
     TESTING_MODE = False
+    OUTPUT_NUCS_COLS__MATRIX = ['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2']
     OUTPUT_COLS__MATRIX = \
-        ['nuc_id1', 'nuc_id2', 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2',
-         'counts', 'dist_sum', 'dist_avg']
+        ['nuc_id1', 'nuc_id2', 'counts', 'dist_sum', 'dist_avg',
+         'dist_window', 'exp_value', 'norm_counts', 'norm_counts_scaled'] + OUTPUT_NUCS_COLS__MATRIX
     OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
@@ -911,14 +912,14 @@ class NucInteraMatrix:
         i for rows, j for cols, and v for values
     """
 
-    def __init__(self, nuc_interas: NucInteras, nucs: Nucs, name: str = None):
+    def __init__(self, nuc_interas: NucInteras, nucs: Nucs, name: str = None, keep_nucs_cols=True):
         self.__nucs = nucs
         self.__nuc_interas = nuc_interas
         self.__name = name
 
         LOGGER.info('\nPreparing Nuc Interaction Matrices:')
         start = timer()
-        refreshed_files = self.__create_nuc_intera_matrix_files()
+        refreshed_files = self.__create_nuc_intera_matrix_files(keep_nucs_cols)
         LOGGER.info(
             f'Done! Preparing Nuc Interaction Matrices finished in {round((timer() - start) / 60.0, 1)} minutes')
 
@@ -942,13 +943,17 @@ class NucInteraMatrix:
         if nucs is None:
             return None
 
+        nucs = nucs.df_nucs
+
         # nucs index is sorted
-        min_nuc_id = nucs.df_nucs.index[0]
-        max_nuc_id = nucs.df_nucs.index[-1]
+        min_nuc_id = nucs.index[0]
+        max_nuc_id = nucs.index[-1]
 
         ijv = self.read_nuc_intera_matrix(chrom, orientation)
         ijv = ijv.query(f'{min_nuc_id} <= nuc_id1 <= {max_nuc_id}')
         ijv = ijv.query(f'{min_nuc_id} <= nuc_id2 <= {max_nuc_id}')
+
+        ijv = self.__append_nucs_cols_if_missing(ijv, nucs)
 
         return ijv
 
@@ -985,9 +990,11 @@ class NucInteraMatrix:
 
         matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        # TODO FIXME check for norm columns
-        # for groupby aggregates: use 'first' for all cols, except cols counts and dist_sum for which 'sum' is used
-        aggregates = {col: 'sum' if col in ('counts', 'dist_sum') else 'first' for col in S.OUTPUT_COLS__MATRIX}
+        # TODO FIXME check for norm columns, and remove extra columns: 'dist_sum', 'dist_avg', 'norm_counts_scaled'
+        # for groupby aggregates: use 'first' for all cols, except cols in sum_cols for which 'sum' is used
+        sum_cols = ('counts', 'dist_sum', 'norm_counts', 'norm_counts_scaled')
+        aggregates = {col: 'sum' if col in sum_cols else 'first' for col in matrix_ijv.columns}
+        aggregates['dist_avg'] = 'mean'
         matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
 
         # TODO FIXME check for norm columns
@@ -995,7 +1002,7 @@ class NucInteraMatrix:
 
         return matrix_ijv
 
-    def __create_nuc_intera_matrix_files(self) -> int:
+    def __create_nuc_intera_matrix_files(self, keep_nucs_cols) -> int:
         # decide if need to continue
         files_needing_refresh = FILES.get_files_needing_refresh(Files.S_MATRIX)
         if files_needing_refresh.empty:
@@ -1011,7 +1018,7 @@ class NucInteraMatrix:
             output_file = file_info.subdir / output_file
             LOGGER.info(f'Creating nuc interaction Matrix file: {output_file}')
             df_nuc_intera, input_file = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
-            df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera)
+            df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera, keep_nucs_cols)
             df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
             refreshed_files += 1
             if not FILES.keep_cache:
@@ -1024,7 +1031,7 @@ class NucInteraMatrix:
 
         return refreshed_files
 
-    def __create_nuc_intera_matrix(self, df_nuc_intera: pd.DataFrame) -> pd.DataFrame:
+    def __create_nuc_intera_matrix(self, df_nuc_intera: pd.DataFrame, keep_nucs_cols) -> pd.DataFrame:
 
         # Goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
         ijv = df_nuc_intera
@@ -1041,22 +1048,30 @@ class NucInteraMatrix:
 
         ijv = ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
 
-        # add nucleosome columns
-        nucs = self.__nucs.df_nucs
-        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id1', right_on='nuc_id')
-        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id2', right_on='nuc_id', suffixes=('1', '2'))
+        ijv = self.__norm_nuc_intera_matrix(ijv)  # add columns for normalized values
+
+        if keep_nucs_cols:
+            ijv = self.__append_nucs_cols_if_missing(ijv, self.__nucs.df_nucs)
 
         col_order = pd.Index(S.OUTPUT_COLS__MATRIX).intersection(ijv.columns)  # keep existing cols but in correct order
         ijv = ijv[col_order]  # same columns, just in the order specified in S.OUTPUT_COLS__MATRIX
 
-        ijv = self.__norm_nuc_intera_matrix(ijv)  # adds columns for normalized values
+        return ijv
+
+    @staticmethod
+    def __append_nucs_cols_if_missing(ijv: pd.DataFrame, nucs: pd.DataFrame) -> pd.DataFrame:
+        if set(S.OUTPUT_NUCS_COLS__MATRIX).issubset(ijv.columns):
+            return ijv  # columns already exist
+
+        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id1', right_on='nuc_id')
+        ijv = pd.merge(ijv, nucs, how='left', left_on='nuc_id2', right_on='nuc_id', suffixes=('1', '2'))
 
         return ijv
 
-    # adds columns for normalized values
     @staticmethod
     def __norm_nuc_intera_matrix(ijv: pd.DataFrame, dist_window_size=100) -> pd.DataFrame:
-        # Observed / Expected non zero
+        # Adds columns for normalized values
+        # Normalized_values = Observed / Expected_nonzero
         # Expected values are the sum per genomic distance divided by sum of non-zero contacts.
         # Only non-zero values are used to compute the expected values per genomic distance.
         # https://hicexplorer.readthedocs.io/en/latest/content/tools/hicTransform.html#observed-expected-non-zero
@@ -1074,7 +1089,6 @@ class NucInteraMatrix:
         ijv['norm_counts'] = ijv.eval("counts / exp_value")
         ijv['norm_counts_scaled'] = ijv.eval("norm_counts / norm_counts.mean() * counts.mean()")
 
-        # todo: delete this line:
         LOGGER.debug(ijv[['counts', 'norm_counts', 'norm_counts_scaled']].describe())
 
         return ijv
@@ -1134,8 +1148,8 @@ class CLI:
             print(out)
 
     @classmethod
-    def handler_prepare_command(
-            cls, command, chroms_file, nucs_file, interas_file, working_dir, zipped, keep_cache, refresh):
+    def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir,
+                                keep_nucs_cols, zipped, keep_cache, refresh):
 
         start = timer()
 
@@ -1152,7 +1166,7 @@ class CLI:
 
         nucs = Nucs(nucs_file=nucs_file, chroms_file=chroms_file)
         nuc_interas = NucInteras(interas_file=interas_file, nucs=nucs, refresh=refresh)
-        nuc_intera_matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs)
+        nuc_intera_matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs, keep_nucs_cols=keep_nucs_cols)
 
         # Check integrity of the results
         missing_files = []
@@ -1392,11 +1406,11 @@ class CLI:
                     Optional output folder to store the nuc-nuc interaction matrices (and other files) 
                     into. Without this option, <working_dir> is derived from the name of the 
                     interaction input file, <interas_file>.""",
-                # '--nucs-info': """
-                #     Adds extra columns in the produced nuc-nuc interaction matrices such that for each nucleosome,
-                #     in addition to its id, there will also be values for "chrom start end".
-                #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
-                #     speed for subsequent operations.""",
+                '--no-nucs': """
+                    Avoid saving extra columns for nucleosomes (chrom1 start1 end1 chrom2 start2 end2) in the generated
+                    nuc-nuc interaction matrices. Instead, it will count on nuc_id1 and nuc_id2 (which are generated 
+                    automatically) to identify nucleosomes. This option reduces the size of the produced matrix files, 
+                    which can improve efficiency in memory and storage usage and speed.""",
                 # '--norm': """
                 #     Adds additional normalization columns in the produced nuc-nuc interaction matrices.
                 #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
@@ -1471,8 +1485,9 @@ class CLI:
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>')
         a = '--dir'  # and '-d'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], metavar='<working_dir>', dest='working_dir')
-        # a = '--nucs-info'  # and '-i'
-        # commands[c].add_argument('-i', a, help=h[c]['args'][a], default=False, action='store_true',dest='nucs_info')
+        a = '--no-nucs'  # and '-n'
+        commands[c].add_argument(
+            a[1:3], a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_nucs_cols')
         # a = '--norm'  # and '-n'
         # commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='norm')
         a = '--zip'  # and '-z'
@@ -1504,21 +1519,21 @@ class CLI:
         assert S.TESTING_MODE
         LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
-        cache = '--cache'
-        refresh = ''  # '--refresh'
-        chroms_file = r'data/yeast_chromosomes.txt'
-        nucs_file = r'data/yeast_nucleosomes.txt'
-        interas_file = r'data/yeast_interactions.txt'
-        working_dir = r'wd/yeast'
-        # chroms_file = r'data/human_chromosomes.txt'
-        # nucs_file = r'data/human_nucleosomes.txt'
-        # interas_file = r'data_local/4DNFI1O6IL1Q.pairs.100m'
-        # working_dir = r'wd/hi100m'
+        cache = "--cache"
+        refresh = ""  # "--refresh"
+        chroms_file = r"data/yeast_chromosomes.txt"
+        nucs_file = r"data/yeast_nucleosomes.txt"
+        interas_file = r"data/yeast_interactions.txt"
+        working_dir = r"wd/yeast-debug"
+        # chroms_file = r"data/human_chromosomes.txt"
+        # nucs_file = r"data/human_nucleosomes.txt"
+        # interas_file = r"data_local/4DNFI1O6IL1Q.pairs.100m"
+        # working_dir = r"wd/hi100m-debug"
 
-        # testing_args = ''
-        # testing_args = '--help'
-        # testing_args = 'prepare --help'
-        # testing_args = 'plot --help'
+        # testing_args = ""
+        # testing_args = "--help"
+        # testing_args = "prepare --help"
+        # testing_args = "plot --help"
         testing_args = f"prepare {cache} {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
@@ -1560,7 +1575,7 @@ def main():
 
 if __name__ == "__main__":
     LOGGER = logging.getLogger()
-    LOGGER.setLevel(level=logging.DEBUG)
+    LOGGER.setLevel(level=logging.DEBUG)  # use logging.INFO or logging.DEBUG
     FILES = Files()  # each command handler will reset FILES with appropriate parameters
 
     main()
