@@ -31,7 +31,8 @@ class S:  # S for Settings
     OUTPUT_NUCS_COLS__MATRIX = ['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2']
     OUTPUT_COLS__MATRIX = \
         ['nuc_id1', 'nuc_id2', 'counts', 'dist_sum', 'dist_avg',
-         'dist_window', 'exp_value', 'norm_counts', 'norm_counts_scaled'] + OUTPUT_NUCS_COLS__MATRIX
+         'num_same_dist_nuc_interas', 'num_same_dist_nuc_contacts', 'expected_counts',  # TODO remove this line
+         'norm_counts'] + OUTPUT_NUCS_COLS__MATRIX
     OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
@@ -42,6 +43,7 @@ class S:  # S for Settings
     STRAND_COLS = USED_COLS[4:]  # ['strand1', 'strand2']
     CHROM_COLS = USED_COLS.iloc[[0, 2]]  # ['chrom1', 'chrom2']
     POS_COLS = USED_COLS.iloc[[1, 3]]  # ['pos1', 'pos2']
+    NORM_DISTANCE = 200  # normalization parameter specifying genomic distance
 
     @staticmethod
     def get_char_name(char: chr) -> str:
@@ -84,19 +86,24 @@ class Files:
     __CONFIG_FILE = 'last_run.ini'
     __WORKING_DIR_SUFFIX = '.inucs'
 
-    def __init__(self, base_file_name=None, working_dir=None, zipped=True, keep_cache=False, refresh=False):
+    def __init__(self, base_file_name=None, working_dir=None,
+                 zipped=True, keep_cache=False, refresh=False, norm_distance=S.NORM_DISTANCE):
         self.__working_files: pd.DataFrame = pd.DataFrame()  # will be reset by reset_working_files
         self.__base_file_name = base_file_name
         self.__working_dir = working_dir
         self.__zipped = zipped
         self.__keep_cache = keep_cache
+        self.__norm_distance = norm_distance
         self.__config = configparser.ConfigParser()
-        self.reset_all(base_file_name, working_dir, refresh, zipped)
+        self.reset_all(base_file_name=base_file_name, working_dir=working_dir,
+                       zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
 
-    def reset_all(self, base_file_name=None, working_dir=None, zipped=True, keep_cache=False, refresh=False):
+    def reset_all(self, base_file_name=None, working_dir=None,
+                  zipped=True, keep_cache=False, refresh=False, norm_distance=S.NORM_DISTANCE):
 
         self.__zipped = zipped
         self.__keep_cache = keep_cache
+        self.__norm_distance = norm_distance
 
         wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
@@ -221,6 +228,11 @@ class Files:
     def keep_cache(self) -> bool:
         """If False, the cache subdirectory will be removed after preparation of matrices."""
         return self.__keep_cache
+
+    @property
+    def norm_distance(self) -> int:
+        """Genomic distance used for normalization."""
+        return self.__norm_distance
 
     @classmethod
     def orientations(cls) -> list:
@@ -865,7 +877,7 @@ class NucInteras:
         if df.columns.size < used_cols.size:
             raise RuntimeError(f'Not enough number of columns in: {interas_file}')
 
-        # TODO this test is not enough to shift the index (also can't delete validate method as it decides on used_cols)
+        # todo this test is not enough to shift the index (also can't delete validate method as it decides on used_cols)
         if df.columns.size > used_cols.size:
             used_cols.index += 1  # there is one extra column at the beginning
 
@@ -979,28 +991,27 @@ class NucInteraMatrix:
                     continue
 
             try:
-                matrix_ijv = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR)
+                ijv = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR)
             except pd.errors.ParserError as parser_error:
                 raise InputFileError(input_file) from parser_error
 
-            matrices.append(matrix_ijv)
+            matrices.append(ijv)
 
         if len(matrices) == 0:
             return self.__EMPTY
 
-        matrix_ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
+        ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        # TODO FIXME check for norm columns, and remove extra columns: 'dist_sum', 'dist_avg', 'norm_counts_scaled'
+        # TODO FIXME check for norm columns, and remove extra columns: 'dist_sum', 'dist_avg'
         # for groupby aggregates: use 'first' for all cols, except cols in sum_cols for which 'sum' is used
-        sum_cols = ('counts', 'dist_sum', 'norm_counts', 'norm_counts_scaled')
-        aggregates = {col: 'sum' if col in sum_cols else 'first' for col in matrix_ijv.columns}
+        sum_cols = ('counts', 'dist_sum', 'norm_counts')
+        aggregates = {col: 'sum' if col in sum_cols else 'first' for col in ijv.columns}
         aggregates['dist_avg'] = 'mean'
-        matrix_ijv = matrix_ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
+        ijv = ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
 
-        # TODO FIXME check for norm columns
-        matrix_ijv = matrix_ijv.apply(pd.to_numeric, downcast='unsigned', errors='ignore')  # for space efficiency
+        ijv = ijv.apply(pd.to_numeric, downcast='unsigned', errors='ignore')  # for space efficiency
 
-        return matrix_ijv
+        return ijv
 
     def __create_nuc_intera_matrix_files(self, keep_nucs_cols) -> int:
         # decide if need to continue
@@ -1048,12 +1059,13 @@ class NucInteraMatrix:
 
         ijv = ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
 
-        ijv = self.__norm_nuc_intera_matrix(ijv)  # add columns for normalized values
+        ijv = self.__norm_nuc_intera_matrix(ijv, FILES.norm_distance)  # add columns for normalized values
 
         if keep_nucs_cols:
             ijv = self.__append_nucs_cols_if_missing(ijv, self.__nucs.df_nucs)
 
-        col_order = pd.Index(S.OUTPUT_COLS__MATRIX).intersection(ijv.columns)  # keep existing cols but in correct order
+        # keep existing cols but put them in correct order
+        col_order = pd.Index(S.OUTPUT_COLS__MATRIX).intersection(ijv.columns)
         ijv = ijv[col_order]  # same columns, just in the order specified in S.OUTPUT_COLS__MATRIX
 
         return ijv
@@ -1069,7 +1081,7 @@ class NucInteraMatrix:
         return ijv
 
     @staticmethod
-    def __norm_nuc_intera_matrix(ijv: pd.DataFrame, dist_window_size=100) -> pd.DataFrame:
+    def __norm_nuc_intera_matrix(ijv: pd.DataFrame, norm_distance) -> pd.DataFrame:
         # Adds columns for normalized values
         # Normalized_values = Observed / Expected_nonzero
         # Expected values are the sum per genomic distance divided by sum of non-zero contacts.
@@ -1077,19 +1089,21 @@ class NucInteraMatrix:
         # https://hicexplorer.readthedocs.io/en/latest/content/tools/hicTransform.html#observed-expected-non-zero
 
         # # High-level goal:
-        # Find all nucs with same genomic distances, sum up the counts, divide by number of rows (m 6.57)
-        # That is, for each genomic distance window, calculate the number of interactions per nucleosome contact
+        # Find all nucs with about same genomic distances, sum up the counts, divide by number of rows (m 6.57)
+        # That is, for each genomic distance rolling window, calculate the number of interactions per nucleosome contact
+        # That is, for interactions with about the same genomic distance, sum counts and divide by row (contacts)
 
-        def num_interas_per_nuc_contact(counts_in_dist_window):
-            return counts_in_dist_window.sum() / len(counts_in_dist_window)  # num of interactions per nuc contact (row)
-
+        # Datetime rolling for a ragged (meaning not-a-regular frequency), time-indexed DataFrame can be used
+        # for the above high-level goal. First, convert dist_avg to datetime to make use of ragged rolling feature
         ijv['dist_avg'] = ijv.eval("dist_sum / counts")
-        ijv['dist_window'] = ijv['dist_avg'].floordiv(dist_window_size)
-        ijv['exp_value'] = ijv.groupby('dist_window')['counts'].transform(num_interas_per_nuc_contact)
-        ijv['norm_counts'] = ijv.eval("counts / exp_value")
-        ijv['norm_counts_scaled'] = ijv.eval("norm_counts / norm_counts.mean() * counts.mean()")
-
-        LOGGER.debug(ijv[['counts', 'norm_counts', 'norm_counts_scaled']].describe())
+        ijv['for_rolling'] = pd.to_datetime(ijv['dist_avg'], unit='s')
+        ijv = ijv.set_index('for_rolling')  # make ijv time-indexed to enable the ragged rolling functionality
+        ijv = ijv.sort_index()
+        same_dist_nucs = ijv['counts'].rolling(f'{norm_distance}s')  # size in 'seconds' for ragged rolling
+        ijv['num_same_dist_nuc_interas'] = same_dist_nucs.sum()
+        ijv['num_same_dist_nuc_contacts'] = same_dist_nucs.count()
+        ijv['expected_counts'] = ijv.eval('num_same_dist_nuc_interas / num_same_dist_nuc_contacts')
+        ijv['norm_counts'] = ijv.eval("counts / expected_counts")
 
         return ijv
 
@@ -1149,12 +1163,12 @@ class CLI:
 
     @classmethod
     def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir,
-                                keep_nucs_cols, zipped, keep_cache, refresh):
+                                keep_nucs_cols, zipped, keep_cache, refresh, norm_distance):
 
         start = timer()
 
-        FILES.reset_all(
-            base_file_name=interas_file, working_dir=working_dir, zipped=zipped, keep_cache=keep_cache, refresh=refresh)
+        FILES.reset_all(base_file_name=interas_file, working_dir=working_dir,
+                        zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
 
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
@@ -1227,10 +1241,12 @@ class CLI:
             #     output_with_orient = Path(output_with_orient.name + '.txt')
             output_with_orient = FILES.working_dir / f'{output_name}_{orient}.txt'
 
+            # TODO efficiency: needs multitasking: for reading and saving files in parallel
+            # TODO efficiency: this approach reads some files two or three times because of 'all' and 'tandem'
             submatrix_ijv = matrix.read_nuc_intera_matrix_region(chrom, start_region, end_region, orient)
 
             if submatrix_ijv is None or len(submatrix_ijv) == 0:
-                LOGGER.info(f'\nNo records found for , {output_with_orient}')
+                LOGGER.info(f'\nNo records found for, {output_with_orient}')
             else:
                 submatrix_ijv.to_csv(output_with_orient, S.FIELD_SEPARATOR, header=True, index=False)
                 submatrices[orient] = submatrix_ijv
@@ -1270,7 +1286,8 @@ class CLI:
         tools = 'box_zoom, wheel_zoom, pan, reset, save'
         tooltips = [('Nuc1', '@nuc_id1:  @chrom1  @start1-@end1'),
                     ('Nuc2', '@nuc_id2:  @chrom2  @start2-@end2'),
-                    ('Counts', '@counts'), ]  # ('log(counts+1)', '@log_counts')])
+                    ('Counts', '@counts'),
+                    ('Norm Counts', '@norm_counts'), ]
 
         p = figure(title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
                    x_axis_location='above', plot_width=900, plot_height=900,
@@ -1411,10 +1428,10 @@ class CLI:
                     nuc-nuc interaction matrices. Instead, it will count on nuc_id1 and nuc_id2 (which are generated 
                     automatically) to identify nucleosomes. This option reduces the size of the produced matrix files, 
                     which can improve efficiency in memory and storage usage and speed.""",
-                # '--norm': """
-                #     Adds additional normalization columns in the produced nuc-nuc interaction matrices.
-                #     NOTE: This option increases the size of the produced matrix files, and may impact memory usage and
-                #     speed for subsequent operations.""",
+                '--norm': f"""
+                    Normalized values are calculated based on Observed counts divided by Expected counts.
+                    Expected counts are the sum per genomic distance divided by sum of non-zero nucleosome contacts.
+                    The default value for the parameter <distance> is {S.NORM_DISTANCE}.""",
                 '--zip': """
                     Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
                     to write and read files.""",
@@ -1485,11 +1502,12 @@ class CLI:
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>')
         a = '--dir'  # and '-d'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], metavar='<working_dir>', dest='working_dir')
-        a = '--no-nucs'  # and '-n'
+        a = '--norm'  # and '-n'
+        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], metavar='<distance>', dest='norm_distance',
+                                 type=int, default=S.NORM_DISTANCE)
+        a = '--no-nucs'  # and '-N'
         commands[c].add_argument(
-            a[1:3], a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_nucs_cols')
-        # a = '--norm'  # and '-n'
-        # commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='norm')
+            '-N', a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_nucs_cols')
         a = '--zip'  # and '-z'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
         a = '--cache'  # and '-c'
