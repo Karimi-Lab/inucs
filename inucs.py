@@ -10,6 +10,7 @@ import functools
 import gzip
 import logging
 import pprint
+import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,7 @@ class S:  # S for Settings
     OUTPUT_COLS__MATRIX = \
         ['nuc_id1', 'nuc_id2', 'counts', 'dist_sum', 'dist_avg',
          'num_same_dist_nuc_interas', 'num_same_dist_nuc_contacts', 'expected_counts',  # TODO remove this line
-         'norm_counts'] + OUTPUT_NUCS_COLS__MATRIX
+         'norm_'] + OUTPUT_NUCS_COLS__MATRIX
     OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
@@ -49,6 +50,19 @@ class S:  # S for Settings
     def get_char_name(char: chr) -> str:
         char_names = {'\t': '<tab>', ' ': '<space>'}
         return char_names.get(char, char)  # return the name, or the char itself if no name is found
+
+    @classmethod
+    def get_norm_col_name(cls) -> str:
+        for col in cls.OUTPUT_COLS__MATRIX:
+            if col.startswith('norm_'):
+                return col
+        raise RuntimeError("Cannot find a column starting with 'norm_'")
+
+    @classmethod
+    def set_norm_col_name(cls, norm_distance: int):
+        # update the 'norm_' col and keep all the rest unchanged
+        cls.OUTPUT_COLS__MATRIX = [
+            f'norm_{norm_distance}' if col.startswith('norm_') else col for col in cls.OUTPUT_COLS__MATRIX]
 
 
 class InputFileError(SyntaxError):
@@ -87,7 +101,7 @@ class Files:
     __WORKING_DIR_SUFFIX = '.inucs'
 
     def __init__(self, base_file_name=None, working_dir=None,
-                 zipped=True, keep_cache=False, refresh=False, norm_distance=S.NORM_DISTANCE):
+                 zipped=False, keep_cache=False, refresh=False, norm_distance=None):
         self.__working_files: pd.DataFrame = pd.DataFrame()  # will be reset by reset_working_files
         self.__base_file_name = base_file_name
         self.__working_dir = working_dir
@@ -99,11 +113,13 @@ class Files:
                        zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
 
     def reset_all(self, base_file_name=None, working_dir=None,
-                  zipped=True, keep_cache=False, refresh=False, norm_distance=S.NORM_DISTANCE):
+                  zipped=False, keep_cache=False, refresh=False, norm_distance=None):
 
         self.__zipped = zipped
         self.__keep_cache = keep_cache
         self.__norm_distance = norm_distance
+        if norm_distance is not None:
+            S.set_norm_col_name(norm_distance)
 
         wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
@@ -1002,11 +1018,23 @@ class NucInteraMatrix:
 
         ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        # TODO FIXME check for norm columns, and remove extra columns: 'dist_sum', 'dist_avg'
-        # for groupby aggregates: use 'first' for all cols, except cols in sum_cols for which 'sum' is used
-        sum_cols = ('counts', 'dist_sum', 'norm_counts')
-        aggregates = {col: 'sum' if col in sum_cols else 'first' for col in ijv.columns}
+        # extract norm_distance value from the column name starting with 'norm_'
+        norm_col = ijv.filter(regex='^norm_', axis=1).columns.to_list()  # find 'norm_' column
+        if len(norm_col) != 1:
+            raise RuntimeError(' '.join(f"""
+                There most be exactly one norm column: {norm_col}. 
+                Consider running prepare with --refresh flag.""".split()))
+        norm_col = norm_col[0]  # now there is exactly one col
+        norm_distance = int(re.search('^norm_(.*)$', norm_col).group(1))
+        S.set_norm_col_name(norm_distance)
+
+        # for groupby aggregates: set 'first' for all cols, then overwrite that for some cols
+        aggregates = dict(zip(ijv.columns, ['first'] * len(ijv.columns)))
+        aggregates['counts'] = 'sum'
+        aggregates['dist_sum'] = 'sum'
         aggregates['dist_avg'] = 'mean'
+        aggregates[S.get_norm_col_name()] = 'sum'
+
         ijv = ijv.groupby(['nuc_id1', 'nuc_id2'], as_index=False).agg(aggregates)
 
         ijv = ijv.apply(pd.to_numeric, downcast='unsigned', errors='ignore')  # for space efficiency
@@ -1018,6 +1046,8 @@ class NucInteraMatrix:
         files_needing_refresh = FILES.get_files_needing_refresh(Files.S_MATRIX)
         if files_needing_refresh.empty:
             return 0
+        if FILES.norm_distance is None:  # so we are not here via 'prepare' but some files are missing
+            raise RuntimeError("Some matrix files are missing. Consider running prepare with --refresh flag.")
 
         # subdir_matrix = files_needing_refresh.head(1).subdir.squeeze()  # read subdir from first row
 
@@ -1103,7 +1133,9 @@ class NucInteraMatrix:
         ijv['num_same_dist_nuc_interas'] = same_dist_nucs.sum()
         ijv['num_same_dist_nuc_contacts'] = same_dist_nucs.count()
         ijv['expected_counts'] = ijv.eval('num_same_dist_nuc_interas / num_same_dist_nuc_contacts')
-        ijv['norm_counts'] = ijv.eval("counts / expected_counts")
+
+        S.set_norm_col_name(norm_distance)
+        ijv[S.get_norm_col_name()] = ijv.eval("counts / expected_counts")
 
         return ijv
 
@@ -1229,7 +1261,7 @@ class CLI:
 
         nucs = Nucs()  # loads nucs from the working directory
         nuc_interas = NucInteras(nucs=nucs, refresh=False)
-        matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs)
+        nuc_intera_matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs)
 
         # output_name = Path(Path(output_name).name)  # dismiss the path to just save in working dir
         # output_name = Path(f'{output_name.stem}_{chrom}_{start_region}_{end_region}{output_name.suffix}')
@@ -1243,7 +1275,7 @@ class CLI:
 
             # TODO efficiency: needs multitasking: for reading and saving files in parallel
             # TODO efficiency: this approach reads some files two or three times because of 'all' and 'tandem'
-            submatrix_ijv = matrix.read_nuc_intera_matrix_region(chrom, start_region, end_region, orient)
+            submatrix_ijv = nuc_intera_matrix.read_nuc_intera_matrix_region(chrom, start_region, end_region, orient)
 
             if submatrix_ijv is None or len(submatrix_ijv) == 0:
                 LOGGER.info(f'\nNo records found for, {output_with_orient}')
@@ -1287,7 +1319,7 @@ class CLI:
         tooltips = [('Nuc1', '@nuc_id1:  @chrom1  @start1-@end1'),
                     ('Nuc2', '@nuc_id2:  @chrom2  @start2-@end2'),
                     ('Counts', '@counts'),
-                    ('Norm Counts', '@norm_counts'), ]
+                    ('Norm Counts', f'@{S.get_norm_col_name()}'), ]
 
         p = figure(title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
                    x_axis_location='above', plot_width=900, plot_height=900,
