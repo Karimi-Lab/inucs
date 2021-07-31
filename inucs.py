@@ -1126,8 +1126,14 @@ class NucInteraMatrix:
         # That is, average of interaction counts between nuc-pairs whose distance is within the query nuc-pair average
         # distance +/- a given distance
 
+        # Algorithm:
         # Datetime rolling for a ragged (meaning not-a-regular frequency), time-indexed DataFrame can be used
         # for the above high-level goal. First, convert dist_avg to datetime to make use of ragged rolling feature
+        # But as of Pandas 1.3.1, this ragged rolling feature only works in one direction and not both ways.
+        # To tackle this limitation, we use rolling twice, once in ascending order of dist_avg, and for a second
+        # time we negate the dist_avg values and rolling them in reverse order.
+        # Finally, combining the two directions, we get rolling results in both directions.
+
         ijv['dist_avg'] = ijv.eval("dist_sum / counts")
         ijv = ijv.sort_values(['dist_avg', 'nuc_id1', 'nuc_id2'])  # sort to enable the ragged rolling
         ijv['for_rolling'] = pd.to_datetime(ijv['dist_avg'], unit='s')
@@ -1135,10 +1141,21 @@ class NucInteraMatrix:
         same_dist_nucs = ijv['counts'].rolling(f'{norm_distance}s')  # size in 'seconds' for ragged rolling
         ijv['num_same_dist_interas'] = same_dist_nucs.sum()
         ijv['num_same_dist_nuc_pairs'] = same_dist_nucs.count()
+
+        # Now, do the same in the reverse order and combine the sum and count values to the previous ones
+        ijv = ijv[::-1]  # reverse the row order
+        ijv['for_rolling'] = pd.to_datetime(-1 * ijv['dist_avg'], unit='s')  # negate dist_avg values
+        ijv = ijv.set_index('for_rolling')  # re-set the negated dist_avg values
+        same_dist_nucs = ijv['counts'].rolling(f'{norm_distance}s')  # same as above
+        ijv['num_same_dist_interas'] += same_dist_nucs.sum() - ijv['counts']  # combine sum with previous direction
+        ijv['num_same_dist_nuc_pairs'] += same_dist_nucs.count() - 1  # combine counts with previous direction
+
         ijv['expected_counts'] = ijv.eval('num_same_dist_interas / num_same_dist_nuc_pairs')
 
         S.set_norm_col_name(norm_distance)
         ijv[S.get_norm_col_name()] = ijv.eval("counts / expected_counts")
+
+        ijv = ijv.sort_values(['nuc_id1', 'nuc_id2'], ignore_index=True)  # back to original order
 
         return ijv
 
