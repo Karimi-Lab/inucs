@@ -9,6 +9,8 @@ import copy
 import functools
 import gzip
 import logging
+import multiprocessing
+import os
 import pprint
 import re
 import shutil
@@ -478,7 +480,7 @@ class Nucs:
         if nucs_file is None:
             read_index = True  # nucs_file can be None only when it's previously been created in working dir with index
             FILES.validate_working_dir()
-            nucs_file = FILES.working_dir / FILES.nucs_file_name
+            nucs_file = FILES.working_dir / FILES.nucs_file_name()
 
         try:
             df_nucs = self.read_csv(nucs_file, sep=sep, comment=comment, read_index=read_index)
@@ -651,11 +653,12 @@ class NucInteras:
         if nucs is None:
             nucs = Nucs()  # loads nucs from the working directory
 
-        # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
-        df_nucs = nucs.df_nucs.copy()
-        df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
-        df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
-        self.__nucs__id_chrom_start_end = df_nucs
+        # # The following code was moved to __create_nuc_interas to support multiprocessing
+        # # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
+        # df_nucs = nucs.df_nucs.copy()
+        # df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
+        # df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
+        # self.__nucs__id_chrom_start_end = df_nucs
 
         self.__chrom_list = nucs.chrom_list
 
@@ -675,6 +678,7 @@ class NucInteras:
             start = timer()
             self.__create_nuc_interas_files()
             LOGGER.info(f'Done! Finding nucleosomes finished in {round((timer() - start) / 60.0, 1)} minutes')
+            # LOGGER.info(f'Done! Finding nucleosomes finished in {(timer() - start)} seconds')
 
     @property
     def name(self) -> str:
@@ -733,6 +737,20 @@ class NucInteras:
 
         return df_nuc_interas, input_file
 
+    @classmethod
+    def _convert_interas_to_nuc_interas(cls, *args):
+        """This function with non-standard args is meant to be used for multiprocessing.Pool"""
+        nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom = args[0]
+
+        df_interas = cls.__read_interas_file(interas_infile)
+        df_nuc_interas = cls.__create_nuc_interas(df_interas, chrom, indexed_nucs_infile)
+        df_nuc_interas.to_csv(nuc_interas_outfile, sep=S.FIELD_SEPARATOR, index=False, header=True)
+        if not S.TESTING_MODE:
+            try:
+                Path(interas_infile).unlink()  # remove the cached input_file to reduce runtime space requirements
+            except Exception as e:
+                LOGGER.error(e)
+
     def __create_nuc_interas_files(self):
 
         subdir_inter = FILES.get_subdir(Files.S_INTER)
@@ -744,7 +762,7 @@ class NucInteras:
             LOGGER.info('No nucleosome interaction files were updated')
             return
 
-        # TODO efficiency: needs multitasking
+        to_do_list = []
         for _, file_info in files_needing_refresh.iterrows():
             # if not file_info.needs_refresh:  # get_files_needing_refresh has already checked for this
             #     continue
@@ -758,15 +776,14 @@ class NucInteras:
                     continue
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = subdir_nuc_inter / output_file
+
+            to_do_list.append((output_file, input_file, FILES.nucs_file_name(fullpath=True), file_info.chrom))
             LOGGER.info(f'Creating nuc interaction file: {output_file}')
-            df_interas = self.__read_interas_file(input_file)
-            df_nuc_interas = self.__create_nuc_interas(df_interas, file_info.chrom)
-            df_nuc_interas.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
-            if not FILES.keep_cache:
-                try:
-                    Path(input_file).unlink()  # remove the cached input_file to reduce runtime space requirements
-                except Exception as e:
-                    LOGGER.error(e)
+
+        n_processors = os.cpu_count() // 2  # TODO get this value as commandline parameter
+        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processors} processors')
+        with multiprocessing.Pool(n_processors) as pool:
+            pool.map(self._convert_interas_to_nuc_interas, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
 
@@ -788,12 +805,22 @@ class NucInteras:
 
         return df_inter
 
-    def __create_nuc_interas(self, df_inter: pd.DataFrame, chrom) -> pd.DataFrame:
+    @staticmethod
+    def __create_nuc_interas(df_inter: pd.DataFrame, chrom, indexed_nucs_file=None) -> pd.DataFrame:
+
+        if indexed_nucs_file is None:
+            df_nucs = Nucs().df_nucs  # loads indexed nucs from the working directory
+        else:  # indexed_nucs_file is given when loading from a separate process
+            df_nucs = Nucs.read_csv(indexed_nucs_file, read_index=True)
+
+        # The following code for Step 1 was moved from __init__() to support multiprocessing.
+        # To avoid data sharing between processes, each process needs to do some redundant job for Step 1
 
         # Step 1:
         # Both Nucs and Interactions will use the same MultiIndex ['chrom', 'pos']
-        # See __init__() for preprocessing of self.__nucs__id_chrom_start_end
-        df_nucs = self.__nucs__id_chrom_start_end  # already has .set_index(['chrom', 'pos'])
+        # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
+        df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
+        df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
         df_nucs = df_nucs.query(f'chrom == "{chrom}"')
 
         df_inter_stack = df_inter.stack(level='side').reset_index()  # 'side' becomes a col, with 'side1' or 'side2'
@@ -1155,6 +1182,7 @@ class NucInteraMatrix:
         S.set_norm_col_name(norm_distance)
         ijv[S.get_norm_col_name()] = ijv.eval("counts / expected_counts")
 
+        # ijv = ijv[::-1]  # reverse the row order
         ijv = ijv.sort_values(['nuc_id1', 'nuc_id2'], ignore_index=True)  # back to original order
 
         return ijv
