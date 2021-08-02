@@ -149,22 +149,22 @@ class Files:
         self.__decide_what_needs_refresh(refresh)
 
     def validate_working_dir(self):
-        if FILES.working_dir is None or not FILES.working_dir.exists():
+        if self.working_dir is None or not self.working_dir.exists():
             raise RuntimeError(
                 f'Working directory does not exist '
-                f'{FILES.working_dir if FILES.working_dir else ""}')
+                f'{self.working_dir if self.working_dir else ""}')
         if not self.working_dir.is_dir():
             raise FileExistsError(f'Expecting a folder, but a file exists: {self.working_dir}')
 
-        nucs_file = self.input_nucs_file_name
-        if nucs_file is None or not Path(FILES.working_dir / nucs_file).exists():
+        nucs_file = self.nucs_file_name()
+        if nucs_file is None or not Path(self.working_dir / nucs_file).exists():
             raise RuntimeError(
                 f'Cannot find the indexed nucleosome file in the working directory '
                 f'{nucs_file if nucs_file else ""}\n'
                 'Please consider using the --refresh flag.')
 
         matrix_subdir = self.__STATES.loc[Files.S_MATRIX, 'subdir']
-        matrix_subdir = FILES.working_dir / matrix_subdir
+        matrix_subdir = self.working_dir / matrix_subdir
         if not matrix_subdir.exists() or not any(matrix_subdir.iterdir()):
             raise RuntimeWarning(
                 f'WARNING: No matrices folder or files found {matrix_subdir}\n'
@@ -186,12 +186,13 @@ class Files:
     def base_file_name(self):
         return self.__base_file_name
 
-    @property
-    def input_nucs_file_name(self):
+    def nucs_file_name(self, fullpath=False):
         file = None
         if self.__reload_config_file():
             file = self.__config['input_files']['nucs_file']
-        return Path(file) if file else None
+        if file is None:
+            return None
+        return self.fullpath(file) if fullpath else Path(file)
 
     @property
     def input_interas_file_name(self):
@@ -353,8 +354,8 @@ class Files:
                         subdir = (self.working_dir / subdir_info.subdir)
                         if subdir.exists():
                             shutil.rmtree(subdir)  # delete subdir
-                    if self.input_nucs_file_name:
-                        nucs_file = self.working_dir / self.input_nucs_file_name
+                    if self.nucs_file_name():
+                        nucs_file = self.working_dir / self.nucs_file_name()
                         nucs_file.unlink(missing_ok=True)  # delete file
                     self.reset_input_file_names()  # resets both arguments to None
                 except Exception as e:
@@ -477,7 +478,7 @@ class Nucs:
         if nucs_file is None:
             read_index = True  # nucs_file can be None only when it's previously been created in working dir with index
             FILES.validate_working_dir()
-            nucs_file = FILES.working_dir / FILES.input_nucs_file_name
+            nucs_file = FILES.working_dir / FILES.nucs_file_name
 
         try:
             df_nucs = self.read_csv(nucs_file, sep=sep, comment=comment, read_index=read_index)
@@ -593,7 +594,7 @@ class Nucs:
         return Nucs.from_dataframe(nucs_in_region, region_name)
 
     @staticmethod
-    def read_csv(nucs_file, sep=S.FIELD_SEPARATOR, comment: str = S.COMMENT_CHAR, read_index=False):
+    def read_csv(nucs_file, sep=S.FIELD_SEPARATOR, comment: str = S.COMMENT_CHAR, read_index=False) -> pd.DataFrame:
         nucs_cols_dict = {0: 'chrom', 1: 'start', 2: 'end'}
         nucs_cols = list(nucs_cols_dict.values())  # ['chrom', 'start', 'end']
         first_row = pd.read_csv(nucs_file, sep=sep, comment=comment, header=None, nrows=1)
@@ -615,7 +616,7 @@ class Nucs:
         df = df.rename({'chr': 'chrom'}, axis=1)
         if read_index:
             if 'nuc_id' in df:
-                df = df.set_index('nuc_id').sort_index()
+                df = df.set_index('nuc_id')  # .sort_index()  # It is assumed here that nuc_id is already sorted
             else:
                 raise RuntimeError(f"Cannot read index as no column is called 'nuc_id' in {nucs_file}")
         else:
@@ -648,7 +649,7 @@ class NucInteras:
         self.__len = 0  # length or number of nuc interactions
 
         if nucs is None:
-            nucs = Nucs()
+            nucs = Nucs()  # loads nucs from the working directory
 
         # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
         df_nucs = nucs.df_nucs.copy()
@@ -768,7 +769,6 @@ class NucInteras:
                     LOGGER.error(e)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
-        # files.__working_files[refresh_col] = False  # flag all as done
 
     @classmethod
     def __read_interas_file(cls, input_file) -> pd.DataFrame:
@@ -1268,6 +1268,8 @@ class CLI:
     @classmethod
     def handler_plot_command_testing(cls, command, working_dir, chrom, start_region, end_region, prefix, save_only):
         # For testing only. Assumes the plot submatrix files have already been generated by handler_plot_command
+        print(pprint.pformat(locals()))  # prints all the arguments
+
         FILES.reset_all(working_dir=working_dir, norm_distance=S.NORM_DISTANCE)  # norm_distance can be diff here
         files = list(FILES.working_dir.glob('my_plot*txt'))
 
