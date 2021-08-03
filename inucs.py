@@ -1013,6 +1013,16 @@ class NucInteraMatrix:
 
         return ijv
 
+    @staticmethod
+    def extract_norm_distance(matrix_ijv: pd.DataFrame) -> Optional[int]:
+        """Extract norm_distance value from the column name starting with 'norm_'"""
+        norm_col = matrix_ijv.filter(regex='^norm_', axis=1).columns.to_list()  # find 'norm_' column
+        if len(norm_col) != 1:
+            return None
+        norm_col = norm_col[0]  # now there is exactly one col
+        norm_distance = int(re.search('^norm_(.*)$', norm_col).group(1))
+        return norm_distance
+
     def read_nuc_intera_matrix(self, chrom: str, orientation='all') -> pd.DataFrame:
         """
         :param chrom: e.g. 'II' or 'chrom14'
@@ -1046,14 +1056,11 @@ class NucInteraMatrix:
 
         ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
 
-        # extract norm_distance value from the column name starting with 'norm_'
-        norm_col = ijv.filter(regex='^norm_', axis=1).columns.to_list()  # find 'norm_' column
-        if len(norm_col) != 1:
+        norm_distance = self.extract_norm_distance(ijv)
+        if norm_distance is None:
             raise RuntimeError(' '.join(f"""
-                There most be exactly one norm column: {norm_col}. 
+                There most be exactly one norm column.
                 Consider running prepare with --refresh flag.""".split()))
-        norm_col = norm_col[0]  # now there is exactly one col
-        norm_distance = int(re.search('^norm_(.*)$', norm_col).group(1))
         S.set_norm_col_name(norm_distance)
 
         # for groupby aggregates: set 'first' for all cols, then overwrite that for some cols
@@ -1250,6 +1257,22 @@ class CLI:
         FILES.reset_all(base_file_name=interas_file, working_dir=working_dir,
                         zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
 
+        # delete all files containing a none-matching norm distance column
+        # for matrix_file in FILES.get_working_files(state=Files.S_MATRIX):
+        matrix_subdir = FILES.get_subdir(state=Files.S_MATRIX)
+        for matrix_file in matrix_subdir.glob('*.txt'):
+            try:
+                header_only = pd.read_csv(matrix_file, sep=S.FIELD_SEPARATOR, nrows=0)
+            except:
+                extracted_norm_distance = None  # so that the matrix_file will be deleted next
+            else:
+                extracted_norm_distance = NucInteraMatrix.extract_norm_distance(header_only)
+            if extracted_norm_distance != norm_distance:
+                try:
+                    Path(matrix_file).unlink()  # remove matrix_file as it's norm_distance is wrong
+                except Exception as e:
+                    LOGGER.error(e)
+
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
@@ -1273,7 +1296,8 @@ class CLI:
             raise RuntimeError(
                 'Error: Some expected matrix files are missing:'
                 '\n'.join(missing_files) + '\n' +
-                'Could not produce expected matrix files!')
+                'Could not produce expected matrix files! \n'
+                'Consider running prepare with --refresh flag.')
 
         if len(nuc_intera_matrix) == 0:
             LOGGER.warning('\nWARNING: The produced matrix is empty!')
@@ -1547,11 +1571,16 @@ class CLI:
                 '--zip': """
                     Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
                     to write and read files.""",
-                '--cache': """
-                    While computing the nuc-nuc matrices, there are many intermediate files that are produces and are
-                    removed at the end. The option --cache instructs the program to keep these intermediate files
-                    (in the "cache" subdirectory) which might prove useful for some downstream analysis. 
-                    NOTE: keeping cache files increases the amount of disk space requirements significantly.""",
+                '--no-cache': """
+                    While computing the nuc-nuc matrices, using the prepare command, there are many intermediate files
+                    that are stored in the <working_dir>/cache subdirectory and can optionally be removed at the end. 
+                    Keeping these intermediate files can speed up the subsequent executions of the prepare command 
+                    (for example with different --norm parameters). The cache files might also prove useful for some 
+                    downstream analysis by the users. However, keeping cache files increases the amount of disk space 
+                    requirements significantly.
+                    The option --no-cache instructs the prepare command to remove the cache files as soon as the
+                    matrix files are generated. The cache files are not needed for the subsequent executions of the
+                    plot command and can be deleted manually if desired.""",
                 '--refresh': """
                     This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices. 
                     WARNING: Refreshing starts from scratch and may take a long time to complete, 
@@ -1620,10 +1649,10 @@ class CLI:
         a = '--no-nucs'  # and '-N'
         commands[c].add_argument(
             '-N', a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_nucs_cols')
+        a = '--no-cache'  # and '-C'
+        commands[c].add_argument('-C', a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_cache')
         a = '--zip'  # and '-z'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
-        a = '--cache'  # and '-c'
-        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='keep_cache')
         a = '--refresh'  # don't offer -r option to avoid accidental refreshing
         commands[c].add_argument(a, help=h[c]['args'][a], default=False, action='store_true')
 
@@ -1649,7 +1678,6 @@ class CLI:
         assert S.TESTING_MODE
         LOGGER.debug('WARNING: Using TESTING mode!')
         # # # for development only:
-        cache = "--cache"
         refresh = ""  # "--refresh"
         chroms_file = r"data/yeast_chromosomes.txt"
         nucs_file = r"data/yeast_nucleosomes.txt"
@@ -1664,7 +1692,7 @@ class CLI:
         # testing_args = "--help"
         # testing_args = "prepare --help"
         # testing_args = "plot --help"
-        testing_args = f"prepare {cache} {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
+        testing_args = f"prepare {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
