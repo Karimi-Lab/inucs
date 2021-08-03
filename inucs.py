@@ -1391,7 +1391,7 @@ class CLI:
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_name, save_only):
         from bokeh.io import show, save
         from bokeh.layouts import layout
-        from bokeh.models import Panel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
+        from bokeh.models import ColorBar, Panel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
         from bokeh.models import HoverTool, PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
         from bokeh.plotting import figure, output_file
         from bokeh.palettes import Greys, Oranges, Greens, Blues, Purples, Reds
@@ -1447,31 +1447,34 @@ class CLI:
         full_ijv['counts_arcsinh'] = np.arcsinh(full_ijv.counts)
         counts_arcsinh_stats = full_ijv['counts_arcsinh'].describe()[['min', 'max']]
 
-        full_ijv['norm_arcsinh'] = np.arcsinh(full_ijv[norm_col])
-        norm_arcsinh_stats = full_ijv['norm_arcsinh'].describe()[['min', 'max']]
-        norm_arcsinh_stats['max'] *= 1.5
-        norm_arcsinh_stats['min'] *= 0.9
-
         tabs = []
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
             orient_label = f"{orient} ({','.join(FILES.get_strands(orient))})".capitalize()
             title = f"Nuc-Nuc Interactions for range: {chrom},{start_region}-{end_region} and orient: {orient_label}"
 
             mapper = LinearColorMapper(  # LogColorMapper
+                # palette=palettes[orient], low=full_ijv['counts'].min(), high=full_ijv['counts'].max())
                 palette=palettes[orient], low=counts_arcsinh_stats['min'], high=counts_arcsinh_stats['max'])
 
             p = figure(title=title, **figure_args)
 
             r = p.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=1,  # alphas[orient],
+                       # fill_color = {'field': 'counts', 'transform': mapper}, line_color = None)
                        fill_color={'field': 'counts_arcsinh', 'transform': mapper}, line_color=None)
 
             p.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p.add_tools(SaveTool())
 
+            color_bar_mapper = LinearColorMapper(  # adjust low and high linearly
+                palette=palettes[orient],
+                low=np.sinh(counts_arcsinh_stats['min']), high=np.sinh(counts_arcsinh_stats['max']))
+            color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10)
+            p.add_layout(color_bar, 'right')
+
             set_fig_attr(p)
 
             mapper = LinearColorMapper(  # LogColorMapper
-                palette=palettes[orient], low=norm_arcsinh_stats['min'], high=norm_arcsinh_stats['max'])
+                palette=palettes[orient], low=full_ijv[norm_col].min(), high=full_ijv[norm_col].max())
 
             p_norm = figure(title="Normalized interaction counts", **figure_args)
 
@@ -1480,6 +1483,9 @@ class CLI:
 
             p_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p_norm.add_tools(SaveTool())
+
+            color_bar = ColorBar(color_mapper=mapper, label_standoff=10)
+            p_norm.add_layout(color_bar, 'right')
 
             set_fig_attr(p_norm)
 
@@ -1707,6 +1713,7 @@ def main():
 
     commandline_parser = CLI.create_commandline_parser()
 
+    # S.TESTING_MODE = True  # for debugging
     if S.TESTING_MODE:
         args = CLI.test_parse_args(commandline_parser)  # for testing only
     else:
