@@ -1,4 +1,3 @@
-
 # iNucs: Inter-Nucleosome Interactions
 
 Given nucleosome genomic coordinates, ligation junctions (in pairs format) produced by the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program, the `inucs` command line tool identifies interactions falling into different nucleosomes and counts them. Here, we discuss the following aspects of `inucs` program:
@@ -12,13 +11,13 @@ Given nucleosome genomic coordinates, ligation junctions (in pairs format) produ
 ------
 ## 1 Installation
 
-1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.8 or above.
+1. Install [Anaconda](https://www.anaconda.com/products/individual) with Python 3.9 or above.
 2. Install the `inucs` dependencies using Anaconda. In a terminal where anaconda is activated type:
 
 ```bash
-conda install numpy pandas bokeh
+conda install pandas bokeh
 ```
-Then, the fully self-contained python script, [`inucs.py`](./inucs.py), can be directly executed; for example: 
+Then, the fully self-contained python script, [`inucs.py`](./inucs.py), can be directly executed; for example:
 
 ```bash
 python inucs.py --help
@@ -29,8 +28,6 @@ Or, if you give the script execution permission via `chmod u+x inucs.py`, then s
 ```bash
 ./inucs.py --help
 ```
-
-
 
 
 ------
@@ -60,6 +57,12 @@ usage: inucs.py [-h] [-q] {prepare,plot} ...
 
 The curly brackets `{}` denote that either of `prepare` or `plot` can be used as a command to the program. The `-h` flag is to print help message, and `-q` suppresses the program progress output.
 
+| NOTE                                                         |
+| :----------------------------------------------------------- |
+| The `inucs` program is still under development and its command line interface (CLI) may change in the future without notice. |
+
+
+
 ### 2.1 The `prepare` Command
 
 In this step, a potentially large interaction pairs file is broken into smaller pieces and the corresponding nucleosome-nucleosome interaction matrices are built.
@@ -73,7 +76,7 @@ To access the built-in help for `prepare` command, issue:
 which outputs:
 
 ```
-usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs> <interacts>
+usage: inucs.py prepare [-h] [-d <working_dir>] [-n <distance>] [-N] [-C] [-z] [--refresh] <chroms_file> <nucs_file> <interas_file>
 
 (omitted for brevity...)
 ```
@@ -90,15 +93,26 @@ usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs>
 
     * `<interacts>`: a file containing interaction pairs produced by the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program
 
-      
+
 
   * Output
     
-    * `<working_dir>`: a folder containing all the intermediary and cached files. These include the resulting matrices with nucleosome-nucleosome interaction counts. Specifying the `<working_dir>` is optional, and if missing, the program will auto-generate a name based on the name of the interactions input file, `<interacts>`.
+    * `<working_dir>`: a folder containing all the intermediary and cached files. These include the resulting matrices with nucleosome-nucleosome interaction counts. The `<working_dir>` location may be specified using the optional arguments `-d` or ` --dir`, and if it is unspecified, the program will auto-generate a name based on the name of the interactions input file, `<interacts>`.
     
-      If the optional `-z` flag is used, the intermediary files in the `<working_dir>` will be compressed using the `gzip` format. Please note that while this option helps to save space, it can slow down the program noticeably.
-    
-      If the optional `--refresh` flag is used, it starts from scratch and recreates the intermediary files.
+
+
+
+  * Optional Arguments:
+    * `-n <distance>` or `--norm <distance>`
+      The normalized value for each nucleosome pair (NP) is calculated as the observed interaction count for that NP divided by the expected count. The expected count for an NP is the average of interaction count between nucleosome pairs whose distance is within the NP's average distance +/- a given `<distance>`. The default value for the parameter `<distance>` is 200.
+    * `-N` or `--no-nucs`
+      Avoid saving extra columns for the two interacting nucleosomes (`chrom1 start1 end1 chrom2 start2 end2`) in the generated nucleosome-nucleosome interaction matrices. Instead, it will count on `nuc_id1` and `nuc_id2` (which are generated automatically) to identify nucleosomes. This option reduces the size of the produced matrix files, which can improve efficiency in memory and storage usage and speed.
+    * `-C` or `--no-cache`
+      While computing the nucleosome-nucleosome interaction matrices, using the `prepare` command, there are many intermediate files that are stored in the `<working_dir>/cache` subdirectory and can optionally be removed at the end. Keeping these intermediate files can speed up the subsequent executions of the `prepare` command (for example with different `--norm` parameters). The cache files might also prove useful for some downstream analysis by the users. However, keeping cache files increases the amount of disk space requirements significantly. The option `--no-cache` instructs the `prepare` command to remove the cache files as soon as the matrix files are generated. The cache files are not needed for the subsequent executions of the `plot` command and can be deleted manually if desired.
+    * `-z` or `--zip`
+      Compress the intermediary files in the `<working_dir>` which will be compressed using the `gzip` format. Please note that while this option helps to save space, it can slow down the program noticeably.
+    * `--refresh`
+      It starts from scratch and recreates the intermediary files. Note that refreshing may take a long time to complete, depending on the size of the input data and your hardware specifications.
 
 
 
@@ -113,7 +127,7 @@ To access the built-in help for `plot` command, use:
 
 which outputs:
 ```
-usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <start_region> <end_region>
+usage: inucs.py plot [-h] [-s] [-p <outfile_prefix>] <working_dir> <chrom> <start_region> <end_region>
 
 (omitted for brevity...)
 ```
@@ -126,9 +140,12 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
   * `<chrom>` such as `III` or `chromX`
   * `<start_region>`  and `<end_region> ` which specify the beginning and end of the region of interest, such as `50000 60000`, within`<chrom>`
 
+
+
+
 * Output
 
-  * The resulting heatmap plot file is saved inside the `<working_dir>` and starts with the prefix `plot` or `<outfile_prefix>` if that is specified by the user. The following pattern is used to generate the resulting plot file name:
+  * The resulting heatmap plot file is saved inside the `<working_dir>` and starts with the prefix `plot` or `<outfile_prefix>` if that is specified by the user (see `-p` option below). The following pattern is used to generate the resulting plot file name:
 
     `<working_dir>/<outfile_prefix>_<chrom>_<start_region>_<end_region>.html`
 
@@ -138,13 +155,21 @@ usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <star
 
 
 
+  * Optional Arguments:
+    * `-s` or `--save`
+      Only save the output files and do not attempt to show them. Without this flag, the results are both saved and shown. This flag can be useful in scripts, for example.
+    * `-p <outfile_prefix>` or `--prefix <outfile_prefix>`
+      A prefix used for output file names generated for the selected subset of the nucleosome-nucleosome interaction matrix. The generated files using this prefix include submatrices for the selected regions and orientations and an html file containing the plots.
+
 ### 2.3 Examples
 
-> ***EXAMPLE DATA:*** You may download our example data for human and yeast from [here](https://emckclac-my.sharepoint.com/:f:/g/personal/k2040209_kcl_ac_uk/Ev9FR2K2kqlKoPpVIpf9Wc0BR_716C_6LyFGfWgqRSuT8Q).
+| Example Data                                                 |
+| :----------------------------------------------------------- |
+| You may download our example data for human and yeast from [here](https://emckclac-my.sharepoint.com/:f:/g/personal/k2040209_kcl_ac_uk/Ev9FR2K2kqlKoPpVIpf9Wc0BR_716C_6LyFGfWgqRSuT8Q). |
 
 As mentioned above `./inucs.py prepare --help` gives the following usage message:
 
-```
+```bash
 usage: inucs.py prepare [-h] [-d <working_dir>] [--refresh] [-z] <chroms> <nucs> <interacts>
 ```
 
@@ -164,27 +189,27 @@ The next step is to produce plots, for which the built-in help `./inucs.py plot 
 usage: inucs.py plot [-h] [-p <outfile_prefix>] [-s] <working_dir> <chrom> <start_region> <end_region>
 ```
 
-Following the `prepare` command above, we can get nucleosome interactions on chromosome `I` in the region between 50000 and 60000 by running the following command:
+Following the `prepare` command above, we can get nucleosome interactions on chromosome `I` in the region between 10000 and 50000 by running the following command:
 
 
 ```bash
-./inucs.py plot yeast_wd I 50000 60000
+./inucs.py plot yeast_wd chrIII 10000 50000
 ```
 
 
 
-<img src="docs/plot_I_50000_60000.jpg" alt="plot_I_50000_60000" style="zoom:35%;" />
+<img src="docs/plot_chrIII_10000_50000.png" alt="docs/plot_chrIII_10000_50000" style="zoom:35%;" />
 
 Plots are generated in html format, which can be opened in the default browser. Alternatively, you can simply use appropriate commands in terminal to open the plot file. For example, in **macOS** use:
 
 ```bash
-open yeast_wd/plot_I_50000_60000.html
+open yeast_wd/plot_chrIII_10000_50000.html
 ```
 
 Or, on **Windows**, you may use:
 
 ```bash
-explorer.exe yeast_wd\plot_I_50000_60000.html
+explorer.exe yeast_wd\plot_chrIII_10000_50000.html
 ```
 
 
@@ -208,7 +233,7 @@ The `prepare` command, which does all the heavy lifting for `inucs`, takes in th
 | 3      | ch1   | 50331 | 50471 |
 |        | ...   |       |       |
 
-The third input of `inucs` is ligation junctions file (optionally in pairs format from the [Pairtools](https://pairtools.readthedocs.io/en/latest/) program). The following example table shows the important interaction pairs columns that are used by `inucs`. All other columns are quietly ignored.
+The third input of `inucs` is ligation junctions file (optionally in pairs format from the [Pairtools](https://pairtools.readthedocs.io/) program). The following example table shows the important interaction pairs columns that are used by `inucs`. All other columns are quietly ignored.
 
 | ...  | chrom1 | pos1  | chrom2 | pos2  | strand1 | strand2 | ...  |
 | ---- | ------ | ----- | ------ | ----- | ------- | ------- | ---- |
@@ -304,7 +329,9 @@ That is, if we manage to ***reduce the problem of matching interaction pairs wit
 
 For now, we show how we can use *sorting for matching* interaction pairs with nucleosomes. 
 
-> **Algorithm Overview:** Let us define a DNA ***location*** to be specified by a chromosome name and a position, e.g., chr1 and 49951. Thus, we can say each interaction pair involves two sides or two locations, which are both specified on a single row of an interaction pair table, i.e., there are two locations per row. We can rearrange this by breaking each row into two rows, putting one location per row. This operation is called *stacking*, which doubles the total number rows here. Next, we also append all nucleosomes as new rows to the same stacked table, but in a way to still keep it as having one location per row. To be able to do that, consider that a nucleosome has a start and an end, and we reuse the start value for its location as well. Now, we have a very long table, each row of which has exactly one location. It is easy enough to also add extra columns to keep track of the *origin* of each row, which can be: the first location of an interaction pair, or the second location of a pair, or a nucleosome. It is now possible to ***sort*** this long table based on location (i.e., chromosome and position). On this sorted table, rows originated from interaction pairs are between rows originated from nucleosomes. Thus, we can easily determine which nucleosome each interaction pair location falls into, and we record that information, i.e., nucleosome id, for each row. We no longer need the rows originated from nucleosomes, so we drop them. Therefore, the remaining rows are only those that are originated from interaction pairs, but now we also have recorded the nucleosome ids they fall into. Finally, we can unstack this table, putting it back to its original format with two locations per row, or one pair per row. Of course, now, each row also contains two nucleosome ids, one for each side of the interaction pair. This is exactly the *intermediary table* that we discussed above.
+| Algorithm Overview |
+| :----------------------------------------------------------- |
+| Let us define a DNA ***location*** to be specified by a chromosome name and a position, e.g., chr1 and 49951. Thus, we can say each interaction pair involves two sides or two locations, which are both specified on a single row of an interaction pair table, i.e., there are two locations per row. We can rearrange this by breaking each row into two rows, putting one location per row. This operation is called *stacking*, which doubles the total number rows here. Next, we also append all nucleosomes as new rows to the same stacked table, but in a way to still keep it as having one location per row. To be able to do that, consider that a nucleosome has a start and an end, and we reuse the start value for its location as well. Now, we have a very long table, each row of which has exactly one location. It is easy enough to also add extra columns to keep track of the *origin* of each row, which can be: the first location of an interaction pair, or the second location of a pair, or a nucleosome. It is now possible to ***sort*** this long table based on location (i.e., chromosome and position). On this sorted table, rows originated from interaction pairs are between rows originated from nucleosomes. Thus, we can easily determine which nucleosome each interaction pair location falls into, and we record that information, i.e., nucleosome id, for each row. We no longer need the rows originated from nucleosomes, so we drop them. Therefore, the remaining rows are only those that are originated from interaction pairs, but now we also have recorded the nucleosome ids they fall into. Finally, we can unstack this table, putting it back to its original format with two locations per row, or one pair per row. Of course, now, each row also contains two nucleosome ids, one for each side of the interaction pair. This is exactly the *intermediary table* that we discussed above. |
 
 In the following, we work through an example to further clarify how the sorting-based algorithm works. Let us consider three of the example tables above, namely, nucleosomes, interaction pairs, and intermediary tables. We start with slightly reformatting the **nucleosomes** by adding one column: `pos` with its values copied from `start`.
 
