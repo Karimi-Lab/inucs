@@ -39,7 +39,7 @@ class S:  # S for Settings
     OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
     COMMENT_CHAR = '#'
     FIELD_SEPARATOR = '\t'
-    INPUT_CHUNK_LINES_READ = 1000 * 1000
+    INPUT_CHUNK_LINES_READ = 1_000_000
     HEADER_LINE_BEGINNING = '#columns: '
     USED_COLS = pd.Series(['chrom1', 'pos1', 'chrom2', 'pos2', 'strand1', 'strand2'])
     LOCATION_COLS = USED_COLS[:4]  # ['chrom1', 'pos1', 'chrom2', 'pos2']
@@ -103,26 +103,34 @@ class Files:
     __CONFIG_FILE = 'last_run.ini'
     __WORKING_DIR_SUFFIX = '.inucs'
 
-    def __init__(self, base_file_name=None, working_dir=None,
-                 zipped=False, keep_cache=False, refresh=False, norm_distance=None):
+    def __init__(self, base_file_name=None, working_dir=None, norm_distance=None,
+                 keep_cache=False, n_processes=0, zipped=False, refresh=False):
         self.__working_files: pd.DataFrame = pd.DataFrame()  # will be reset by reset_working_files
         self.__base_file_name = base_file_name
         self.__working_dir = working_dir
-        self.__zipped = zipped
-        self.__keep_cache = keep_cache
         self.__norm_distance = norm_distance
+        self.__keep_cache = keep_cache
+        self.__n_processes = n_processes
+        self.__zipped = zipped
         self.__config = configparser.ConfigParser()
-        self.reset_all(base_file_name=base_file_name, working_dir=working_dir,
-                       zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
+        self.reset_all(base_file_name=base_file_name, working_dir=working_dir, norm_distance=norm_distance,
+                       keep_cache=keep_cache, n_processes=n_processes, zipped=zipped, refresh=refresh)
 
-    def reset_all(self, base_file_name=None, working_dir=None,
-                  zipped=False, keep_cache=False, refresh=False, norm_distance=None):
+    def reset_all(self, base_file_name=None, working_dir=None, norm_distance=None,
+                  keep_cache=False, n_processes=0, zipped=False, refresh=False):
 
         self.__zipped = zipped
         self.__keep_cache = keep_cache
         self.__norm_distance = norm_distance
         if norm_distance is not None:
             S.set_norm_col_name(norm_distance)
+
+        if n_processes < 1:
+            self.__n_processes = min(10, os.cpu_count() - 1)
+        elif n_processes > os.cpu_count():
+            self.__n_processes = os.cpu_count()
+        else:
+            self.__n_processes = n_processes
 
         wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
@@ -253,6 +261,11 @@ class Files:
     def norm_distance(self) -> int:
         """Genomic distance used for normalization."""
         return self.__norm_distance
+
+    @property
+    def n_processes(self) -> int:
+        """Number of processes simultaneously analysing data."""
+        return self.__n_processes
 
     @classmethod
     def orientations(cls) -> list:
@@ -784,9 +797,8 @@ class NucInteras:
             to_do_list.append((output_file, input_file, FILES.nucs_file_name(fullpath=True), file_info.chrom))
             LOGGER.info(f'Creating nuc interaction file: {output_file}')
 
-        n_processors = os.cpu_count() // 2  # TODO get this value as commandline parameter
-        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processors} processors')
-        with multiprocessing.Pool(n_processors) as pool:
+        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {FILES.n_processes} processors')
+        with multiprocessing.Pool(FILES.n_processes) as pool:
             pool.map(self._convert_interas_to_nuc_interas, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
@@ -1253,12 +1265,12 @@ class CLI:
 
     @classmethod
     def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir,
-                                keep_nucs_cols, zipped, keep_cache, refresh, norm_distance):
+                                norm_distance, keep_nucs_cols, keep_cache, n_processes, zipped, refresh):
 
         start = timer()
 
-        FILES.reset_all(base_file_name=interas_file, working_dir=working_dir,
-                        zipped=zipped, keep_cache=keep_cache, refresh=refresh, norm_distance=norm_distance)
+        FILES.reset_all(base_file_name=interas_file, working_dir=working_dir, norm_distance=norm_distance,
+                        keep_cache=keep_cache, n_processes=n_processes, zipped=zipped, refresh=refresh)
 
         # delete all files containing a none-matching norm distance column
         # for matrix_file in FILES.get_working_files(state=Files.S_MATRIX):
@@ -1553,46 +1565,50 @@ class CLI:
             """,
             'args': {
                 'chroms_file': """
-                    Chromosomes file with one mandatory column "chrom". Any other chromosome names that may appear 
+                    Chromosomes file with one mandatory column "chrom". Any other chromosome names that may appear
                     in the <nucs_file> or <interas_file> will be ignored if they not present in <chroms_file>.""",
                 'nucs_file': """
-                    Nucleosomes file with columns: "[id] chrom start end" with the [id] column being optional 
+                    Nucleosomes file with columns: "[id] chrom start end" with the [id] column being optional
                     (see below).""",
                 'interas_file': """
-                    Interactions file with columns: "[id] chrom1 pos1 chrom2 pos2 strand1 strand2" with the [id] column 
-                    being optional (see below). NOTE: The output of the pairtools program is accepted as <interas_file> 
+                    Interactions file with columns: "[id] chrom1 pos1 chrom2 pos2 strand1 strand2" with the [id] column
+                    being optional (see below). NOTE: The output of the pairtools program is accepted as <interas_file>
                     without requiring any changes (e.g., the extra columns will be ignored).""",
                 '--dir': """
-                    Optional output folder to store the nuc-nuc interaction matrices (and other files) 
-                    into. Without this option, <working_dir> is derived from the name of the 
+                    Optional output folder to store the nuc-nuc interaction matrices (and other files)
+                    into. Without this option, <working_dir> is derived from the name of the
                     interaction input file, <interas_file>.""",
-                '--no-nucs': """
-                    Avoid saving extra columns for nucleosomes (chrom1 start1 end1 chrom2 start2 end2) in the generated
-                    nuc-nuc interaction matrices. Instead, it will count on nuc_id1 and nuc_id2 (which are generated 
-                    automatically) to identify nucleosomes. This option reduces the size of the produced matrix files, 
-                    which can improve efficiency in memory and storage usage and speed.""",
                 '--norm': f"""
                     The normalized value for each nucleosome pair (NP) is calculated as the observed interaction
                     count for that NP divided by the expected count.
-                    The expected count for an NP is the average of interaction count between nucleosome pairs whose 
+                    The expected count for an NP is the average of interaction count between nucleosome pairs whose
                     distance is within the NP's average distance +/- a given <distance>.
                     The default value for the parameter <distance> is {S.NORM_DISTANCE}.""",
-                '--zip': """
-                    Compress intermediary and cache files using gzip. Zipping files saves space but requires more time 
-                    to write and read files.""",
+                '--no-nucs': """
+                    Avoid saving extra columns for nucleosomes (chrom1 start1 end1 chrom2 start2 end2) in the generated
+                    nuc-nuc interaction matrices. Instead, it will count on nuc_id1 and nuc_id2 (which are generated
+                    automatically) to identify nucleosomes. This option reduces the size of the produced matrix files,
+                    which can improve efficiency in memory and storage usage and speed.""",
                 '--no-cache': """
                     While computing the nuc-nuc matrices, using the prepare command, there are many intermediate files
-                    that are stored in the <working_dir>/cache subdirectory and can optionally be removed at the end. 
-                    Keeping these intermediate files can speed up the subsequent executions of the prepare command 
-                    (for example with different --norm parameters). The cache files might also prove useful for some 
-                    downstream analysis by the users. However, keeping cache files increases the amount of disk space 
+                    that are stored in the <working_dir>/cache subdirectory and can optionally be removed at the end.
+                    Keeping these intermediate files can speed up the subsequent executions of the prepare command
+                    (for example with different --norm parameters). The cache files might also prove useful for some
+                    downstream analysis by the users. However, keeping cache files increases the amount of disk space
                     requirements significantly.
                     The option --no-cache instructs the prepare command to remove the cache files as soon as the
                     matrix files are generated. The cache files are not needed for the subsequent executions of the
                     plot command and can be deleted manually if desired.""",
+                '--multiprocessing': """
+                    Maximum number of processes (one per CPU core) that simultaneously analyse the data. Typically, this
+                    depends on the number of CPU cores and the amount of memory available on the system. The default
+                    value is 0 (zero), which means the program attempts to guess a reasonable number of processes.""",
+                '--zip': """
+                    Compress intermediary and cache files using gzip. Zipping files saves space but requires more time
+                    to write and read files.""",
                 '--refresh': """
-                    This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices. 
-                    WARNING: Refreshing starts from scratch and may take a long time to complete, 
+                    This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices.
+                    WARNING: Refreshing starts from scratch and may take a long time to complete,
                     depending on the size of the input data and your hardware specifications.""",
             }
         },
@@ -1602,20 +1618,20 @@ class CLI:
             'args': {
                 'working_dir': 'This is the folder created by the "prepare" command.',
                 'chrom': """
-                    A chromosome, e.g. III or chr21, on which a region is being selected.  
-                    NOTE: chrom has to be from those mentioned in <chroms_file> provided  
+                    A chromosome, e.g. III or chr21, on which a region is being selected.
+                    NOTE: chrom has to be from those mentioned in <chroms_file> provided
                     to the "prepare" command.""",
                 'start_region': 'A positive integer, representing the start of the region being selected.',
                 'end_region': 'A positive integer, representing the end of the region being selected.',
                 '--prefix': """
-                    A prefix used for output file names generated for the selected subset of the nuc-nuc 
-                    interaction matrix. The generated files using this prefix include submatrices for the 
+                    A prefix used for output file names generated for the selected subset of the nuc-nuc
+                    interaction matrix. The generated files using this prefix include submatrices for the
                     selected regions and orientations and an html file containing the plots.""",
                 '--orientation': """
                     Optional parameter to specify the orientation of interaction. 
                     If this option is not present, all orientations and their combinations will be considered.""",
                 '--save': """
-                    Only save the output files and do not attempt to show them. Without this flag, the results are 
+                    Only save the output files and do not attempt to show them. Without this flag, the results are
                     both saved and shown. This flag can be useful in scripts, for example.""",
             }
         },
@@ -1660,6 +1676,9 @@ class CLI:
             '-N', a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_nucs_cols')
         a = '--no-cache'  # and '-C'
         commands[c].add_argument('-C', a, help=h[c]['args'][a], default=True, action='store_false', dest='keep_cache')
+        a = '--multiprocessing'  # and '-m'
+        commands[c].add_argument(
+            a[1:3], a, help=h[c]['args'][a], metavar='<processes>', dest='n_processes', type=int, default=0)
         a = '--zip'  # and '-z'
         commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
         a = '--refresh'  # don't offer -r option to avoid accidental refreshing
