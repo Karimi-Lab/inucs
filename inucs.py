@@ -6,6 +6,7 @@ import collections.abc as abc
 import configparser
 import contextlib
 import copy
+import datetime
 import functools
 import gzip
 import logging
@@ -16,7 +17,6 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from timeit import default_timer as timer
 from typing import Optional, Tuple
@@ -425,6 +425,11 @@ class Files:
                 break
 
 
+def time_diff(start_time, end_time=None):
+    seconds = round((timer() if end_time is None else end_time) - start_time)
+    return f'{datetime.timedelta(seconds=seconds)} (h:m:s)'
+
+
 class Chroms(abc.Sequence):
     """ Chromosomes """
 
@@ -672,13 +677,12 @@ class NucInteras:
             LOGGER.info('\nSplitting interaction file based on chrom and orientation:')
             start = timer()
             self.__split_interas_file()
-            LOGGER.info(f'Done! Splitting task finished in {round((timer() - start) / 60.0, 1)} minutes')
+            LOGGER.info(f'Done! Splitting task finished in {time_diff(start)}')
 
             LOGGER.info('\nFinding nucleosomes for interactions:')
             start = timer()
             self.__create_nuc_interas_files()
-            LOGGER.info(f'Done! Finding nucleosomes finished in {round((timer() - start) / 60.0, 1)} minutes')
-            # LOGGER.info(f'Done! Finding nucleosomes finished in {(timer() - start)} seconds')
+            LOGGER.info(f'Done! Finding nucleosomes finished in {time_diff(start)}')
 
     @property
     def name(self) -> str:
@@ -976,8 +980,7 @@ class NucInteraMatrix:
         LOGGER.info('\nPreparing Nuc Interaction Matrices:')
         start = timer()
         refreshed_files = self.__create_nuc_intera_matrix_files(keep_nucs_cols)
-        LOGGER.info(
-            f'Done! Preparing Nuc Interaction Matrices finished in {round((timer() - start) / 60.0, 1)} minutes')
+        LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
 
         LOGGER.info(f'\nNumber of updated Nuc Interaction Matrices: {refreshed_files}')
         LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self)}nucs * {len(self)}nucs.')
@@ -1276,7 +1279,7 @@ class CLI:
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info('\n\n\n' + datetime.now().isoformat())
+        LOGGER.info('\n\n\n' + datetime.datetime.now().isoformat())
         LOGGER.info(f"= = = = = Arguments for command '{command}':")
         LOGGER.info(pprint.pformat(locals()))  # log all the arguments
         LOGGER.info(f'Logging to file {log_file_name}.\n')
@@ -1315,7 +1318,7 @@ class CLI:
                 LOGGER.error(e)
                 LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
 
-        LOGGER.info(f"\n = = = = = Finished command '{command}' in {round((timer() - start) / 60.0, 1)} minutes")
+        LOGGER.info(f"\n = = = = = Finished command '{command}' in {time_diff(start)}")
 
     @classmethod
     def handler_plot_command_testing(cls, command, working_dir, chrom, start_region, end_region, prefix, save_only):
@@ -1348,7 +1351,7 @@ class CLI:
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info('\n\n\n' + datetime.now().isoformat())
+        LOGGER.info('\n\n\n' + datetime.datetime.now().isoformat())
         LOGGER.info(f"= = = = = Arguments for command '{command}':")
         LOGGER.info(pprint.pformat(locals()))  # log all the arguments
         LOGGER.info(f'Logging to file {log_file_name}.\n')
@@ -1385,7 +1388,7 @@ class CLI:
             LOGGER.warning('\n\nNOTE: No plots have been produced because no data is available. '
                            'You many want to consider expanding the chromosome region of study.')
 
-        LOGGER.info(f"\n = = = = = Finished command '{command}' in {round((timer() - start), 0)} seconds")
+        LOGGER.info(f"\n = = = = = Finished command '{command}' in {time_diff(start)}")
 
     @classmethod
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_name, save_only):
