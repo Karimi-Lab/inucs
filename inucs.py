@@ -755,9 +755,8 @@ class NucInteras:
         return df_nuc_interas, input_file
 
     @classmethod
-    def _convert_interas_to_nuc_interas(cls, *args):
-        """This function with non-standard args is meant to be used for multiprocessing.Pool"""
-        nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom = args[0]
+    def _convert_interas_to_nuc_interas(cls, nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom):
+        """This function is meant to be used by multiprocessing.Pool"""
 
         df_interas = cls.__read_interas_file(interas_infile)
         df_nuc_interas = cls.__create_nuc_interas(df_interas, chrom, indexed_nucs_infile)
@@ -766,7 +765,8 @@ class NucInteras:
             try:
                 Path(interas_infile).unlink()  # remove the cached input_file to reduce runtime space requirements
             except Exception as e:
-                LOGGER.error(e)
+                # LOGGER.error(e)  # The LOGGER object is not available processes, potentially running on other machines
+                print(e, file=sys.stderr)  # used instead of LOGGER.error(e)
 
     def __create_nuc_interas_files(self):
 
@@ -797,9 +797,10 @@ class NucInteras:
             to_do_list.append((output_file, input_file, FILES.nucs_file_name(fullpath=True), file_info.chrom))
             LOGGER.info(f'Creating nuc interaction file: {output_file}')
 
-        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {FILES.n_processes} processors')
-        with multiprocessing.Pool(FILES.n_processes) as pool:
-            pool.map(self._convert_interas_to_nuc_interas, to_do_list)
+        n_processes = min(FILES.n_processes, len(to_do_list))
+        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processes} processors')
+        with multiprocessing.Pool(n_processes) as pool:
+            pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
 
@@ -1272,7 +1273,7 @@ class CLI:
         FILES.reset_all(base_file_name=interas_file, working_dir=working_dir, norm_distance=norm_distance,
                         keep_cache=keep_cache, n_processes=n_processes, zipped=zipped, refresh=refresh)
 
-        # delete all files containing a none-matching norm distance column
+        # delete all files containing a non-matching norm distance column
         # for matrix_file in FILES.get_working_files(state=Files.S_MATRIX):
         matrix_subdir = FILES.get_subdir(state=Files.S_MATRIX)
         for matrix_file in matrix_subdir.glob('*.txt'):
@@ -1425,11 +1426,11 @@ class CLI:
             fig.axis.axis_line_color = None
             fig.axis.major_tick_line_color = None
             fig.axis.major_label_standoff = 0
-            fig.axis.major_label_text_font_size = '13pt'
-            fig.xaxis.axis_label_text_font_size = '13pt'
-            fig.yaxis.axis_label_text_font_size = '13pt'
+            fig.axis.major_label_text_font_size = '12pt'
+            fig.xaxis.axis_label_text_font_size = '12pt'
+            fig.yaxis.axis_label_text_font_size = '12pt'
             fig.yaxis.major_label_orientation = 'vertical'
-            fig.title.text_font_size = '13pt'
+            fig.title.text_font_size = '12pt'
 
         def r(colors, num_colors=256):  # Reverse the order going from light to dark, and select max num of colors
             return list(reversed(colors[num_colors]))
@@ -1439,8 +1440,11 @@ class CLI:
         # alphas = dict(all=.8, tandem=.4, right=.6, left=.6, inner=.5, outer=.5)
 
         full_ijv = pd.concat(matrices.values(), keys=matrices.keys(), names=['orient', None], sort=False)
-        nuc_id_min = full_ijv[['nuc_id1', 'nuc_id2']].min().min() * (1 - 0.0002)  # smaller than min
-        nuc_id_max = full_ijv[['nuc_id1', 'nuc_id2']].max().max() * (1 + 0.0002)  # larger than max
+        nuc_id_min = full_ijv[['nuc_id1', 'nuc_id2']].min().min()
+        nuc_id_max = full_ijv[['nuc_id1', 'nuc_id2']].max().max()
+        max_min = nuc_id_max - nuc_id_min
+        nuc_id_min -= max_min * .05  # making min 5% smaller
+        nuc_id_max += max_min * .05  # making max 5% larger
 
         x_range = Range1d(nuc_id_min, nuc_id_max, bounds='auto')
         y_range = Range1d(nuc_id_max, nuc_id_min, bounds='auto')  # flipped order: max, min
@@ -1455,41 +1459,43 @@ class CLI:
                     ('Counts', '@counts'),
                     (f'Norm ({norm_dist})', f'@{norm_col}'), ]
 
+        # Bokeh Bug?
+        # Setting match_aspect=True, aspect_scale=1 does not work for figure.rect, so setting width and height manually
         figure_args = dict(
-            plot_width=700, plot_height=700, x_axis_location='above', toolbar_location='below',
+            plot_width=600, plot_height=670, x_axis_location='above', toolbar_location='below',
             x_range=x_range, y_range=y_range, tools=tools, x_axis_label='Nucleosome 1', y_axis_label='Nucleosome 2', )
 
-        full_ijv['counts_arcsinh'] = np.arcsinh(full_ijv.counts)
-        counts_arcsinh_stats = full_ijv['counts_arcsinh'].describe()[['min', 'max']]
+        full_ijv['arcsinh_counts'] = np.arcsinh(full_ijv.counts)
 
         tabs = []
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
             orient_label = f"{orient} ({','.join(FILES.get_strands(orient))})".capitalize()
             title = f"Nuc-Nuc Interactions for range: {chrom},{start_region}-{end_region} and orient: {orient_label}"
 
+            min_arcsinh_counts, max_arcsinh_counts = ijv['arcsinh_counts'].describe()[['min', 'max']]
+
             mapper = LinearColorMapper(  # LogColorMapper
                 # palette=palettes[orient], low=full_ijv['counts'].min(), high=full_ijv['counts'].max())
-                palette=palettes[orient], low=counts_arcsinh_stats['min'], high=counts_arcsinh_stats['max'])
+                palette=palettes[orient], low=min_arcsinh_counts, high=max_arcsinh_counts)
 
             p = figure(title=title, **figure_args)
 
             r = p.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=1,  # alphas[orient],
                        # fill_color = {'field': 'counts', 'transform': mapper}, line_color = None)
-                       fill_color={'field': 'counts_arcsinh', 'transform': mapper}, line_color=None)
+                       fill_color={'field': 'arcsinh_counts', 'transform': mapper}, line_color=None)
 
             p.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p.add_tools(SaveTool())
 
             color_bar_mapper = LinearColorMapper(  # adjust low and high linearly
-                palette=palettes[orient],
-                low=np.sinh(counts_arcsinh_stats['min']), high=np.sinh(counts_arcsinh_stats['max']))
-            color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10)
-            p.add_layout(color_bar, 'right')
+                palette=palettes[orient], low=np.sinh(min_arcsinh_counts), high=np.sinh(max_arcsinh_counts))
+            color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10, height=20)
+            p.height += color_bar.label_standoff + color_bar.height
+            p.add_layout(color_bar, 'below')
 
             set_fig_attr(p)
 
-            mapper = LinearColorMapper(  # LogColorMapper
-                palette=palettes[orient], low=full_ijv[norm_col].min(), high=full_ijv[norm_col].max())
+            mapper = LinearColorMapper(palette=palettes[orient], low=ijv[norm_col].min(), high=ijv[norm_col].max())
 
             p_norm = figure(title="Normalized interaction counts", **figure_args)
 
@@ -1499,8 +1505,9 @@ class CLI:
             p_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p_norm.add_tools(SaveTool())
 
-            color_bar = ColorBar(color_mapper=mapper, label_standoff=10)
-            p_norm.add_layout(color_bar, 'right')
+            color_bar = ColorBar(color_mapper=mapper, label_standoff=10, height=20)
+            p_norm.height += color_bar.label_standoff + color_bar.height
+            p_norm.add_layout(color_bar, 'below')
 
             set_fig_attr(p_norm)
 
@@ -1710,11 +1717,11 @@ class CLI:
         chroms_file = r"data/yeast_chromosomes.txt"
         nucs_file = r"data/yeast_nucleosomes.txt"
         interas_file = r"data/yeast_interactions.txt"
-        working_dir = r"wd/yeast-debug"
+        working_dir = r"wd/yeast_debug"
         # chroms_file = r"data/human_chromosomes.txt"
         # nucs_file = r"data/human_nucleosomes.txt"
-        # interas_file = r"data_local/4DNFI1O6IL1Q.pairs.100m"
-        # working_dir = r"wd/hi100m-debug"
+        # interas_file = r"data_local/4DNFI1O6IL1Q.pairs.gz"
+        # working_dir = r"wd/human_debug"
 
         # testing_args = ""
         # testing_args = "--help"
@@ -1761,6 +1768,7 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.getLogger('numexpr').setLevel(logging.WARNING)  # to suppress an irrelevant message from NumExpr
     LOGGER = logging.getLogger()
     LOGGER.setLevel(level=logging.DEBUG)  # use logging.INFO or logging.DEBUG
     FILES = Files()  # each command handler will reset FILES with appropriate parameters
