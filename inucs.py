@@ -1440,6 +1440,8 @@ class CLI:
         # alphas = dict(all=.8, tandem=.4, right=.6, left=.6, inner=.5, outer=.5)
 
         full_ijv = pd.concat(matrices.values(), keys=matrices.keys(), names=['orient', None], sort=False)
+        full_ijv['arcsinh_counts'] = np.arcsinh(full_ijv.counts)
+
         nuc_id_min = full_ijv[['nuc_id1', 'nuc_id2']].min().min()
         nuc_id_max = full_ijv[['nuc_id1', 'nuc_id2']].max().max()
         max_min = nuc_id_max - nuc_id_min
@@ -1465,9 +1467,20 @@ class CLI:
             plot_width=600, plot_height=670, x_axis_location='above', toolbar_location='below',
             x_range=x_range, y_range=y_range, tools=tools, x_axis_label='Nucleosome 1', y_axis_label='Nucleosome 2', )
 
-        full_ijv['arcsinh_counts'] = np.arcsinh(full_ijv.counts)
+        p_overlaid = figure(
+            title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
+            **figure_args)
+        set_fig_attr(p_overlaid)
+        p_overlaid.height -= 30
 
-        tabs = []
+        p_overlaid_norm = figure(title="Normalized interaction counts", **figure_args)
+        set_fig_attr(p_overlaid_norm)
+        p_overlaid_norm.height -= 30
+
+        lyt = layout([[p_overlaid, p_overlaid_norm]])
+
+        tabs = list()
+        tabs.append(Panel(child=lyt, title='Overlaid', closable=False))
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
             orient_label = f"{orient} ({','.join(FILES.get_strands(orient))})".capitalize()
             title = f"Nuc-Nuc Interactions for range: {chrom},{start_region}-{end_region} and orient: {orient_label}"
@@ -1481,7 +1494,6 @@ class CLI:
             p = figure(title=title, **figure_args)
 
             r = p.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=1,  # alphas[orient],
-                       # fill_color = {'field': 'counts', 'transform': mapper}, line_color = None)
                        fill_color={'field': 'arcsinh_counts', 'transform': mapper}, line_color=None)
 
             p.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
@@ -1495,17 +1507,17 @@ class CLI:
 
             set_fig_attr(p)
 
-            mapper = LinearColorMapper(palette=palettes[orient], low=ijv[norm_col].min(), high=ijv[norm_col].max())
+            mapper_norm = LinearColorMapper(palette=palettes[orient], low=ijv[norm_col].min(), high=ijv[norm_col].max())
 
             p_norm = figure(title="Normalized interaction counts", **figure_args)
 
             r = p_norm.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=1,  # alphas[orient],
-                            fill_color={'field': norm_col, 'transform': mapper}, line_color=None)
+                            fill_color={'field': norm_col, 'transform': mapper_norm}, line_color=None)
 
             p_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p_norm.add_tools(SaveTool())
 
-            color_bar = ColorBar(color_mapper=mapper, label_standoff=10, height=20)
+            color_bar = ColorBar(color_mapper=mapper_norm, label_standoff=10, height=20)
             p_norm.height += color_bar.label_standoff + color_bar.height
             p_norm.add_layout(color_bar, 'below')
 
@@ -1513,6 +1525,32 @@ class CLI:
 
             lyt = layout([[p, p_norm]])  # , sizing_mode='fixed')
             tabs.append(Panel(child=lyt, title=orient_label, closable=False))
+
+            # Overlaid tab
+            legend_label = '' if orient == 'all' else ' (' + ','.join(FILES.get_strands(orient)) + ')'
+            legend_label = orient.title() + legend_label
+            r = p_overlaid.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
+                                fill_color={'field': 'arcsinh_counts', 'transform': mapper},
+                                line_color=None, legend_label=legend_label)
+
+            p_overlaid.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
+            if orient != 'all':
+                r.visible = False
+
+            r = p_overlaid_norm.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
+                                     fill_color={'field': 'arcsinh_counts', 'transform': mapper_norm},
+                                     line_color=None, legend_label=legend_label)
+
+            p_overlaid_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
+            if orient != 'all':
+                r.visible = False
+
+        p_overlaid.add_tools(SaveTool())
+        p_overlaid.legend.location = 'bottom_left'
+        p_overlaid.legend.click_policy = 'hide'
+        p_overlaid_norm.add_tools(SaveTool())
+        p_overlaid_norm.legend.location = 'bottom_left'
+        p_overlaid_norm.legend.click_policy = 'hide'
 
         last_tabs = len(tabs) - 1
         tabs = Tabs(tabs=tabs)
