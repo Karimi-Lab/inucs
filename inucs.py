@@ -125,8 +125,9 @@ class Files:
         if norm_distance is not None:
             S.set_norm_col_name(norm_distance)
 
-        if n_processes < 1:
-            self.__n_processes = min(10, os.cpu_count() - 1)
+        if n_processes < 1:  # default value is 0
+            self.__n_processes = os.cpu_count() - 1
+            # self.__n_processes = min(10, self.__n_processes)
         elif n_processes > os.cpu_count():
             self.__n_processes = os.cpu_count()
         else:
@@ -166,14 +167,14 @@ class Files:
         if not self.working_dir.is_dir():
             raise FileExistsError(f'Expecting a folder, but a file exists: {self.working_dir}')
 
-        nucs_file = self.nucs_file_name()
+        nucs_file = self.indexed_nucs_file()
         if nucs_file is None or not Path(self.working_dir / nucs_file).exists():
             raise RuntimeError(
                 f'Cannot find the indexed nucleosome file in the working directory '
                 f'{nucs_file if nucs_file else ""}\n'
                 'Please consider using the --refresh flag.')
 
-        matrix_subdir = self.__STATES.loc[Files.S_MATRIX, 'subdir']
+        matrix_subdir = self.__STATES.loc[self.S_MATRIX, 'subdir']
         matrix_subdir = self.working_dir / matrix_subdir
         if not matrix_subdir.exists() or not any(matrix_subdir.iterdir()):
             raise RuntimeWarning(
@@ -196,7 +197,7 @@ class Files:
     def base_file_name(self):
         return self.__base_file_name
 
-    def nucs_file_name(self, fullpath=False):
+    def indexed_nucs_file(self, fullpath=False):
         file = None
         if self.__reload_config_file():
             file = self.__config['input_files']['nucs_file']
@@ -364,13 +365,13 @@ class Files:
 
             if refresh:  # then delete some of files and sub-folders
                 try:
-                    subdirs_to_remove = Files.__STATES.query("data_type in ['cached', 'intermediary']")
+                    subdirs_to_remove = self.__STATES.query("data_type in ['cached', 'intermediary']")
                     for _, subdir_info in subdirs_to_remove.iterrows():
                         subdir = (self.working_dir / subdir_info.subdir)
                         if subdir.exists():
                             shutil.rmtree(subdir)  # delete subdir
-                    if self.nucs_file_name():
-                        nucs_file = self.working_dir / self.nucs_file_name()
+                    if self.indexed_nucs_file():
+                        nucs_file = self.working_dir / self.indexed_nucs_file()
                         nucs_file.unlink(missing_ok=True)  # delete file
                     self.reset_input_file_names()  # resets both arguments to None
                 except Exception as e:
@@ -380,7 +381,7 @@ class Files:
                     raise RuntimeError(message) from e
 
             # recreate sub-folders
-            for _, subdir_info in Files.__STATES.iterrows():
+            for _, subdir_info in self.__STATES.iterrows():
                 subdir = (self.working_dir / subdir_info.subdir)
                 subdir.mkdir(parents=True, exist_ok=True)
 
@@ -401,13 +402,13 @@ class Files:
         df['file'] = self.base_file_name.stem + '_' + df.chrom + '_' + df.orientation + suffix
         df['file_zip'] = df.file + '.gz'
 
-        refresh_cols = Files.__STATES.dropna()['refresh_col'].tolist()
+        refresh_cols = self.__STATES.dropna()['refresh_col'].tolist()
         df[refresh_cols] = True  # makes three bool columns for file refreshing
 
         self.__working_files = df
 
     def __decide_what_needs_refresh(self, refresh):
-        status = Files.__STATES[::-1].dropna()  # __STATES with rows reversed and the 'plot' row dropped
+        status = self.__STATES[::-1].dropna()  # __STATES with rows reversed and the 'plot' row dropped
         subdir_list = status['subdir'].to_list()  # ['matrices', 'cache', 'cache/interactions']
         refresh_col_list = status['refresh_col'].to_list()  # ['refresh_matrix', 'refresh_nuc_inter', 'refresh_inter']
 
@@ -498,7 +499,7 @@ class Nucs:
         if nucs_file is None:
             read_index = True  # nucs_file can be None only when it's previously been created in working dir with index
             FILES.validate_working_dir()
-            nucs_file = FILES.working_dir / FILES.nucs_file_name()
+            nucs_file = FILES.working_dir / FILES.indexed_nucs_file()
 
         try:
             df_nucs = self.read_csv(nucs_file, sep=sep, comment=comment, read_index=read_index)
@@ -713,12 +714,8 @@ class NucInteras:
     __EMPTY = pd.DataFrame(columns=pd.MultiIndex.from_product(
         [['side1', 'side2'], ['chrom', 'pos']], names=['side', 'loc'])).rename_axis(index='inter_id')
 
-    def iter_nuc_interas(self):
-        for file_info in FILES.iter_working_files():
-            nuc_interas = self.read_nuc_inter(file_info.chrom, file_info.orientation)
-            yield nuc_interas  # todo test to see it's ok where nuc_interas.empty is True
-
-    def read_nuc_inter(self, chrom: str, orientation: str) -> Tuple[pd.DataFrame, Path]:
+    @classmethod
+    def read_nuc_inter(cls, chrom: str, orientation: str) -> Tuple[pd.DataFrame, Path]:
         """
         :param chrom: e.g. 'II' or 'chrom14'
         :param orientation:  It can be any of ('+-', '-+', '++', '--') or ('Inner', 'Outer', 'Right', 'Left')
@@ -728,13 +725,13 @@ class NucInteras:
 
         working_file = FILES.get_working_files(chrom, orientation, Files.S_NUC_INTER).squeeze()
         if working_file.empty:
-            return self.__EMPTY
+            return cls.__EMPTY
 
         input_file = working_file.subdir / working_file.file
         if not input_file.exists():
             input_file = working_file.subdir / working_file.file_zip  # check if zip version exists
             if not input_file.exists():
-                return self.__EMPTY
+                return cls.__EMPTY
 
         try:
             df_nuc_interas = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
@@ -779,7 +776,9 @@ class NucInteras:
             LOGGER.info('No nucleosome interaction files were updated')
             return
 
+        indexed_nucs_file = FILES.indexed_nucs_file(fullpath=True)
         to_do_list = []
+
         for _, file_info in files_needing_refresh.iterrows():
             # if not file_info.needs_refresh:  # get_files_needing_refresh has already checked for this
             #     continue
@@ -794,7 +793,7 @@ class NucInteras:
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = subdir_nuc_inter / output_file
 
-            to_do_list.append((output_file, input_file, FILES.nucs_file_name(fullpath=True), file_info.chrom))
+            to_do_list.append((output_file, input_file, indexed_nucs_file, file_info.chrom))
             LOGGER.info(f'Creating nuc interaction file: {output_file}')
 
         n_processes = min(FILES.n_processes, len(to_do_list))
@@ -865,7 +864,6 @@ class NucInteras:
         df_nuc_interas = df_nuc_interas[S.OUTPUT_COLS__NUC_INTERAS]
         # ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
 
-        # todo efficiency: sorting is useful for output files but not needed. Should keep it?
         df_nuc_interas = df_nuc_interas.sort_values(['nuc_id1', 'nuc_id2']).reset_index(drop=True)
 
         return df_nuc_interas
@@ -1109,7 +1107,8 @@ class NucInteraMatrix:
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = file_info.subdir / output_file
             LOGGER.info(f'Creating nuc interaction Matrix file: {output_file}')
-            df_nuc_intera, input_file = self.__nuc_interas.read_nuc_inter(file_info.chrom, file_info.orientation)
+
+            df_nuc_intera, input_file = NucInteras.read_nuc_inter(file_info.chrom, file_info.orientation)
             df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera, keep_nucs_cols)
             df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
             refreshed_files += 1
@@ -1125,7 +1124,7 @@ class NucInteraMatrix:
 
     def __create_nuc_intera_matrix(self, df_nuc_intera: pd.DataFrame, keep_nucs_cols) -> pd.DataFrame:
 
-        # Goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
+        # Our goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
         ijv = df_nuc_intera
 
         # make ijv symmetric by swapping cols i,j to j,i:  'nuc_id2', 'nuc_id1'
@@ -1295,7 +1294,7 @@ class CLI:
         LOGGER.info('\n\n\n' + datetime.datetime.now().isoformat())
         LOGGER.info(f"= = = = = Arguments for command '{command}':")
         LOGGER.info(pprint.pformat(locals()))  # log all the arguments
-        LOGGER.info(f'Logging to file {log_file_name}.\n')
+        LOGGER.info(f'Logging to file {log_file_name}\n')
 
         nucs = Nucs(nucs_file=nucs_file, chroms_file=chroms_file)
         nuc_interas = NucInteras(interas_file=interas_file, nucs=nucs, refresh=refresh)
@@ -1766,7 +1765,7 @@ class CLI:
         # testing_args = "prepare --help"
         # testing_args = "plot --help"
         testing_args = f"prepare {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
-        # testing_args = f"plot {working_dir} II 1 50000 --prefix my_plot"
+        # testing_args = f"plot {working_dir} chrIII 237000 262000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
         arguments = parser.parse_args(testing_args.split())  # for debugging
 
