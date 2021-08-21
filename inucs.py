@@ -688,15 +688,16 @@ class NucInteras:
         if should_create_nuc_interas_files:
             self.__interas_file = Path(interas_file).resolve(strict=True)
 
-            LOGGER.info('\nSplitting interaction file based on chrom and orientation:')
+            LOGGER.info('\nSplitting interaction file based on chrom and orientation.\n'
+                        'This may take several minutes or hours depending on your system and input file size.')
             start = timer()
             self.__split_interas_file()
-            LOGGER.info(f'Done! Splitting task finished in {time_diff(start)}')
+            LOGGER.info(f'\nDone! Splitting task finished in {time_diff(start)}')
 
             LOGGER.info('\nFinding nucleosomes for interactions:')
             start = timer()
             self.__create_nuc_interas_files()
-            LOGGER.info(f'Done! Finding nucleosomes finished in {time_diff(start)}')
+            LOGGER.info(f'\nDone! Finding nucleosomes finished in {time_diff(start)}')
 
     @property
     def name(self) -> str:
@@ -714,33 +715,37 @@ class NucInteras:
     __EMPTY = pd.DataFrame(columns=pd.MultiIndex.from_product(
         [['side1', 'side2'], ['chrom', 'pos']], names=['side', 'loc'])).rename_axis(index='inter_id')
 
-    @classmethod
-    def read_nuc_inter(cls, chrom: str, orientation: str) -> Tuple[pd.DataFrame, Path]:
+    @staticmethod
+    def get_nuc_interas_file(chrom: str, orientation: str) -> Optional[Path]:
         """
         :param chrom: e.g. 'II' or 'chrom14'
         :param orientation:  It can be any of ('+-', '-+', '++', '--') or ('Inner', 'Outer', 'Right', 'Left')
         Further, 'p' instead of '+', and 'n' or 'm' instead of '-' are acceptable.
         :return:
-        """  # todo Default orientation should be None for all.
-
+        """
         working_file = FILES.get_working_files(chrom, orientation, Files.S_NUC_INTER).squeeze()
         if working_file.empty:
-            return cls.__EMPTY
+            return None
 
-        input_file = working_file.subdir / working_file.file
-        if not input_file.exists():
-            input_file = working_file.subdir / working_file.file_zip  # check if zip version exists
-            if not input_file.exists():
-                return cls.__EMPTY
+        nuc_interas_file = working_file.subdir / working_file.file
+        if not nuc_interas_file.exists():
+            nuc_interas_file = working_file.subdir / working_file.file_zip  # check if zip version exists
+            if not nuc_interas_file.exists():
+                return None
+
+        return nuc_interas_file
+
+    @classmethod
+    def read_nuc_interas_file(cls, nuc_interas_file) -> pd.DataFrame:
 
         try:
-            df_nuc_interas = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
+            df_nuc_interas = pd.read_csv(nuc_interas_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
                                          usecols=S.OUTPUT_COLS__NUC_INTERAS)
         except pd.errors.ParserError as parser_error:
-            raise InputFileError(input_file) from parser_error
+            raise InputFileError(nuc_interas_file) from parser_error
 
         if not df_nuc_interas.eval("chrom1 == chrom2").all():
-            raise RuntimeError(f"Not all chrom1 and chrom2 values are equal in {input_file}")
+            raise RuntimeError(f"Not all chrom1 and chrom2 values are equal in {nuc_interas_file}")
 
         df_nuc_interas['counts'] = 1  # initially every row is counted as 1
         df_nuc_interas['dist_sum'] = df_nuc_interas.eval('abs(pos1 - pos2)')  # distance between interaction locations
@@ -749,7 +754,7 @@ class NucInteras:
 
         df_nuc_interas = df_nuc_interas.apply(pd.to_numeric, downcast='unsigned')  # to save space
 
-        return df_nuc_interas, input_file
+        return df_nuc_interas
 
     @classmethod
     def _convert_interas_to_nuc_interas(cls, nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom):
@@ -764,6 +769,8 @@ class NucInteras:
             except Exception as e:
                 # LOGGER.error(e)  # The LOGGER object is not available processes, potentially running on other machines
                 print(e, file=sys.stderr)  # used instead of LOGGER.error(e)
+
+        print('.', end='')  # print a dot to show progress
 
     def __create_nuc_interas_files(self):
 
@@ -794,10 +801,10 @@ class NucInteras:
             output_file = subdir_nuc_inter / output_file
 
             to_do_list.append((output_file, input_file, indexed_nucs_file, file_info.chrom))
-            LOGGER.info(f'Creating nuc interaction file: {output_file}')
+            LOGGER.info(f'Queued: creating nuc interaction file: {output_file}')
 
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processes} processors')
+        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processes} processors.\nPlease wait')
         with multiprocessing.Pool(n_processes) as pool:
             pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
 
@@ -894,20 +901,67 @@ class NucInteras:
                 for chrom_and_orientation, df in groups:
                     chrom = chrom_and_orientation[0]  # e.g., 'chrom21'
                     orientation = chrom_and_orientation[1:]  # e.g., ('+', '-')
-                    working_file = FILES.get_working_files(chrom, orientation, Files.S_INTER).squeeze()
-                    if working_file.empty or not working_file.needs_refresh:
-                        continue
                     # TODO efficiency: needs multitasking
                     file = output_files.get(chrom_and_orientation)
                     if file is None:
-                        open_file = gzip.open if FILES.zipped else open
+                        working_file = FILES.get_working_files(chrom, orientation, Files.S_INTER).squeeze()
+                        if working_file.empty or not working_file.needs_refresh:
+                            continue
                         file = working_file.file_zip if FILES.zipped else working_file.file
                         file = working_file.subdir / file
+                        open_file = gzip.open if FILES.zipped else open
                         file = cm.enter_context(open_file(file, 'wt'))
                         output_files[chrom_and_orientation] = file
 
                     # Here header=False because the code for bash is not writing out header (yet)
                     df.to_csv(file, sep=S.FIELD_SEPARATOR, index=False, header=False)
+
+        FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
+
+    def __split_interas_file_line_by_line(self):
+        # experimental method, potentially useful for multiprocessing
+
+        # decide if need to continue
+        if FILES.get_files_needing_refresh(Files.S_INTER).empty:
+            LOGGER.info('\nNo interaction cache files were updated')
+            return
+
+        self.__validate_interas_file(self.__interas_file)
+
+        chrom_set = set(self.__chrom_list)
+        output_files = {}
+        with open(self.__interas_file, 'r') as interas_file:
+
+            # First skip through all the comment lines
+            last_pos = interas_file.tell()
+            line = interas_file.readline()
+            while line != '':
+                if line.startswith(S.COMMENT_CHAR):
+                    last_pos = interas_file.tell()
+                    line = interas_file.readline()
+                else:
+                    interas_file.seek(last_pos)  # put back the last line which is the first non-comment line
+                    break
+
+            with contextlib.ExitStack() as cm:  # allows to open an unknown number of files
+                for line in interas_file:
+                    _, chrom1, pos1, chrom2, pos2, strand1, strand2, *_ = line.split(S.FIELD_SEPARATOR)
+
+                    if chrom1 == chrom2 and chrom1 in chrom_set:
+                        chrom_and_orientation = (chrom1, strand1, strand2)
+                        file = output_files.get(chrom_and_orientation)
+                        if file is None:
+                            working_file = FILES.get_working_files(chrom1, strand1+strand2, Files.S_INTER).squeeze()
+                            if working_file.empty or not working_file.needs_refresh:
+                                continue
+                            file = working_file.file_zip if FILES.zipped else working_file.file
+                            file = working_file.subdir / file
+                            open_file = gzip.open if FILES.zipped else open
+                            file = cm.enter_context(open_file(file, 'wt'))
+                            output_files[chrom_and_orientation] = file
+
+                    line = S.FIELD_SEPARATOR.join((chrom1, pos1, chrom2, pos2, strand1, strand2))
+                    file.write(line + '\n')
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
@@ -991,7 +1045,7 @@ class NucInteraMatrix:
         LOGGER.info('\nPreparing Nuc Interaction Matrices:')
         start = timer()
         refreshed_files = self.__create_nuc_intera_matrix_files(keep_nucs_cols)
-        LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
+        LOGGER.info(f'\nDone! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
 
         LOGGER.info(f'\nNumber of updated Nuc Interaction Matrices: {refreshed_files}')
         LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self)}nucs * {len(self)}nucs.')
@@ -1090,6 +1144,22 @@ class NucInteraMatrix:
 
         return ijv
 
+    @classmethod
+    def _convert_nuc_interas_to_matrices(
+            cls, output_file, nuc_interas_file, indexed_nucs_file, norm_distance, keep_cache):
+        """This function is meant to be used by multiprocessing.Pool"""
+
+        df_nuc_intera_matrix = cls.__create_nuc_intera_matrix(nuc_interas_file, indexed_nucs_file, norm_distance)
+        df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
+        if not keep_cache:
+            try:
+                Path(nuc_interas_file).unlink()  # remove the cached input_file to reduce runtime space requirements
+            except Exception as e:
+                # LOGGER.error(e)  # The LOGGER object is not available processes, potentially running on other machines
+                print(e, file=sys.stderr)  # used instead of LOGGER.error(e)
+
+        print('.', end='')  # print a dot to show progress
+
     def __create_nuc_intera_matrix_files(self, keep_nucs_cols) -> int:
         # decide if need to continue
         files_needing_refresh = FILES.get_files_needing_refresh(Files.S_MATRIX)
@@ -1098,31 +1168,35 @@ class NucInteraMatrix:
         if FILES.norm_distance is None:  # so we are not here via 'prepare' but some files are missing
             raise RuntimeError("Some matrix files are missing. Consider running prepare with --refresh flag.")
 
-        # subdir_matrix = files_needing_refresh.head(1).subdir.squeeze()  # read subdir from first row
+        indexed_nucs_file = FILES.indexed_nucs_file(fullpath=True) if keep_nucs_cols else None
+        to_do_list = []
 
-        refreshed_files = 0
         for _, file_info in files_needing_refresh.iterrows():
             if file_info.chrom not in self.chrom_list:
                 continue
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = file_info.subdir / output_file
-            LOGGER.info(f'Creating nuc interaction Matrix file: {output_file}')
 
-            df_nuc_intera, input_file = NucInteras.read_nuc_inter(file_info.chrom, file_info.orientation)
-            df_nuc_intera_matrix = self.__create_nuc_intera_matrix(df_nuc_intera, keep_nucs_cols)
-            df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
-            refreshed_files += 1
-            if not FILES.keep_cache:
-                try:
-                    Path(input_file).unlink()  # remove the cached input_file to reduce runtime space requirements
-                except Exception as e:
-                    LOGGER.error(e)
+            nuc_interas_file = NucInteras.get_nuc_interas_file(file_info.chrom, file_info.orientation)
+
+            to_do_list.append((output_file, nuc_interas_file, indexed_nucs_file, FILES.norm_distance, FILES.keep_cache))
+            LOGGER.info(f'Queued: creating nuc interaction Matrix file: {output_file}')
+
+        n_processes = min(FILES.n_processes, len(to_do_list))
+        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files, using {n_processes} processors.\nPlease wait')
+        with multiprocessing.Pool(n_processes) as pool:
+            pool.starmap(self._convert_nuc_interas_to_matrices, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_MATRIX)
 
-        return refreshed_files
+        n_files_refreshed = len(to_do_list)
+        return n_files_refreshed
 
-    def __create_nuc_intera_matrix(self, df_nuc_intera: pd.DataFrame, keep_nucs_cols) -> pd.DataFrame:
+    @classmethod
+    def __create_nuc_intera_matrix(
+            cls, nuc_interas_file, indexed_nucs_file=None, norm_distance=S.NORM_DISTANCE) -> pd.DataFrame:
+
+        df_nuc_intera = NucInteras.read_nuc_interas_file(nuc_interas_file)
 
         # Our goal is to create a ijv sparse matrix: i:nuc_id1, j:nuc_id2, v:counts
         ijv = df_nuc_intera
@@ -1139,10 +1213,11 @@ class NucInteraMatrix:
 
         ijv = ijv.apply(pd.to_numeric, downcast='unsigned')  # for space efficiency
 
-        ijv = self.__norm_nuc_intera_matrix(ijv, FILES.norm_distance)  # add columns for normalized values
+        ijv = cls.__norm_nuc_intera_matrix(ijv, norm_distance)  # add columns for normalized values
 
-        if keep_nucs_cols:
-            ijv = self.__append_nucs_cols_if_missing(ijv, self.__nucs.df_nucs)
+        if indexed_nucs_file:
+            df_nucs = Nucs.read_csv(indexed_nucs_file, read_index=True)
+            ijv = cls.__append_nucs_cols_if_missing(ijv, df_nucs)
 
         # keep existing cols but put them in correct order
         col_order = pd.Index(S.OUTPUT_COLS__MATRIX).intersection(ijv.columns)
