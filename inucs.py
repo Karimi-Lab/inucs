@@ -9,21 +9,24 @@ import copy
 import datetime
 import functools
 import gzip
+import io
+import itertools
 import logging
 import multiprocessing
 import os
 import pprint
+import queue
 import re
 import shutil
 import subprocess
 import sys
+from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pandas as pd
-from pandas import CategoricalDtype
 from pandas.errors import EmptyDataError
 
 
@@ -31,22 +34,21 @@ class S:  # S for Settings
     """ Holds all the Settings and Constants used globally """
     # todo the following constants should be read from a config file
     TESTING_MODE = False
+    COMMENT_CHAR = '#'
+    FIELD_SEPARATOR = '\t'
+    NORM_DISTANCE = 200  # normalization parameter specifying genomic distance
     OUTPUT_NUCS_COLS__MATRIX = ['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2']
     OUTPUT_COLS__MATRIX = \
         ['nuc_id1', 'nuc_id2', 'counts', 'dist_sum', 'dist_avg',
-         'num_same_dist_interas', 'num_same_dist_nuc_pairs', 'expected_counts',  # TODO remove this line
+         # 'num_same_dist_interas', 'num_same_dist_nuc_pairs', 'expected_counts',
          'norm_'] + OUTPUT_NUCS_COLS__MATRIX
     OUTPUT_COLS__NUC_INTERAS = ['chrom1', 'pos1', 'chrom2', 'pos2', 'nuc_id1', 'nuc_id2']
-    COMMENT_CHAR = '#'
-    FIELD_SEPARATOR = '\t'
-    INPUT_CHUNK_LINES_READ = 1_000_000
     HEADER_LINE_BEGINNING = '#columns: '
     USED_COLS = pd.Series(['chrom1', 'pos1', 'chrom2', 'pos2', 'strand1', 'strand2'])
     LOCATION_COLS = USED_COLS[:4]  # ['chrom1', 'pos1', 'chrom2', 'pos2']
     STRAND_COLS = USED_COLS[4:]  # ['strand1', 'strand2']
     CHROM_COLS = USED_COLS.iloc[[0, 2]]  # ['chrom1', 'chrom2']
     POS_COLS = USED_COLS.iloc[[1, 3]]  # ['pos1', 'pos2']
-    NORM_DISTANCE = 200  # normalization parameter specifying genomic distance
 
     @staticmethod
     def get_char_name(char: chr) -> str:
@@ -172,14 +174,14 @@ class Files:
             raise RuntimeError(
                 f'Cannot find the indexed nucleosome file in the working directory '
                 f'{nucs_file if nucs_file else ""}\n'
-                'Please consider using the --refresh flag.')
+                f'Please consider refreshing your working directory using "prepare --refresh"')
 
         matrix_subdir = self.__STATES.loc[self.S_MATRIX, 'subdir']
         matrix_subdir = self.working_dir / matrix_subdir
         if not matrix_subdir.exists() or not any(matrix_subdir.iterdir()):
             raise RuntimeWarning(
                 f'WARNING: No matrices folder or files found {matrix_subdir}\n'
-                'Please consider using the --refresh flag.'
+                f'Please consider refreshing your working directory using "prepare --refresh"'
             )
 
     def iter_working_files(self):
@@ -306,6 +308,20 @@ class Files:
         df['needs_refresh'] = df[refresh_col]
         df['subdir'] = self.get_subdir(state)
         return df[self.__IMP_COLS]
+
+    def get_files_needing_refresh__dict(self, state) -> dict:
+        """returns working files in a dict, which is easier to handle for multiprocessing"""
+        df = self.get_files_needing_refresh(state)
+        if df.empty:
+            return {}
+
+        chroms_and_strands = \
+            df[['chrom', 'strands']].apply(lambda row: (row['chrom'], *row['strands']), axis=1)  # e.g., (chrII, +, -)
+        full_file_names = df['subdir'] / (df['file_zip'] if self.zipped else df['file'])
+
+        working_files_dict = dict(zip(chroms_and_strands, full_file_names))  # e.g. {(chrII, +, -): 'path/to/outfile'}
+
+        return working_files_dict
 
     def get_subdir(self, state) -> Path:
         subdir = self.working_dir / self.__STATES.loc[state, 'subdir']
@@ -454,10 +470,10 @@ class Chroms(abc.Sequence):
         if len(chroms) > 0 and chroms[0] in ['chrom', 'chr']:  # remove the first row if it was a header row
             chroms = chroms.drop(index=0).reset_index(drop=True)
 
-        chroms = chroms.astype(CategoricalDtype(ordered=True))
+        chroms = chroms.astype(pd.CategoricalDtype(ordered=True))
         self.__chroms = chroms
         self.__name = name if name else str(Path(chrom_list_file).name)
-        LOGGER.info(f'\nChroms file read: "{self.name}" containing {len(self)} chromosomes:')
+        LOGGER.info(f'\nChroms file read: "{self.name}" containing {len(self):,} chromosomes:')
         LOGGER.info(', '.join(self.list) + '\n')
 
     @property
@@ -471,6 +487,12 @@ class Chroms(abc.Sequence):
 
     @property
     def list(self) -> list: return self.__chroms.to_list()
+
+    @property
+    def categorical(self): return self.create_categorical(self.list)
+
+    @staticmethod
+    def create_categorical(chroms: list): return pd.CategoricalDtype(categories=chroms, ordered=True)
 
     def __len__(self): return self.__chroms.__len__()
 
@@ -514,7 +536,7 @@ class Nucs:
             nucs_file = self.to_csv(output_file=nucs_file)
             FILES.set_input_nucs_file(nucs_file=nucs_file)
 
-        LOGGER.info(f'\nNucs file read: "{self.name}" containing {len(self)} nucleosomes.')
+        LOGGER.info(f'\nNucs file read: "{self.name}" containing {len(self):,} nucleosomes.')
         LOGGER.info(self)
 
     @classmethod
@@ -525,11 +547,16 @@ class Nucs:
         self.__name = name
 
         if chrom_list:  # keep only rows with chrom in chrom_list
-            id_chrom_start_end = id_chrom_start_end.query(f"chrom in {chrom_list}")
+            # id_chrom_start_end = id_chrom_start_end.query(f"chrom in {chrom_list}")  # too slow
+            chrom_cat = Chroms.create_categorical(chrom_list)
+            id_chrom_start_end['chrom'] = id_chrom_start_end['chrom'].astype(chrom_cat)
+            id_chrom_start_end = id_chrom_start_end.dropna()  # drop any chroms not in chrom_list
 
         if 'nuc_id' in id_chrom_start_end.columns:
             id_chrom_start_end = id_chrom_start_end.set_index('nuc_id').sort_index()
         elif 'nuc_id' != id_chrom_start_end.index.name:  # index name is already 'nuc_id' when selected from regions
+            chrom_cat = Chroms.create_categorical(id_chrom_start_end['chrom'].unique().tolist())
+            id_chrom_start_end['chrom'] = id_chrom_start_end['chrom'].astype(chrom_cat)
             id_chrom_start_end = id_chrom_start_end.sort_values(['chrom', 'start', 'end'])
             id_chrom_start_end = id_chrom_start_end.reset_index(drop=True).rename_axis('nuc_id')
 
@@ -561,6 +588,10 @@ class Nucs:
         return list(self.__chrom_2_nucs.keys())
 
     @property
+    def chrom_categorical(self):
+        return pd.CategoricalDtype(categories=self.chrom_list, ordered=True)
+
+    @property
     def df_nucs(self):
         return self.__nucs  # .copy()  # not copying for efficiency
 
@@ -580,9 +611,9 @@ class Nucs:
         return len(self.__nucs)
 
     def __repr__(self):
-        return self.name + '\n' + \
-               str(self.__nucs.head(2)) + '\n...\n(' + \
-               str(self.__nucs.shape[0]) + ' nucleosomes)'
+        return f'{self.name}:\n' \
+               f'{self.__nucs.head(3)}\n...\n' \
+               f'({self.__nucs.shape[0]:,} nucleosomes)'
 
     @functools.lru_cache
     def find_nuc_id(self, chrom, pos):
@@ -645,7 +676,7 @@ class Nucs:
             df = df.reset_index(drop=True).rename_axis('nuc_id')
             df = df[nucs_cols]  # reordering cols and ignoring extra cols if any
 
-        df['chrom'] = df['chrom'].astype(CategoricalDtype(ordered=True))
+        df['chrom'] = df['chrom'].astype(pd.CategoricalDtype(ordered=True))
 
         return df
 
@@ -654,6 +685,256 @@ class Nucs:
         self.__nucs.to_csv(
             FILES.fullpath(output_file), sep=sep, index=index, header=True)
         return output_file
+
+
+class InterasFileSplitter:
+    __DONE = 'DONE!'
+
+    @classmethod
+    def split_interas_file(cls, outfiles: dict, interas_file, chroms_list, used_cols):
+        manager = multiprocessing.Manager()
+        q1_read = manager.Queue()
+        q2_split = manager.Queue()
+        q3_write = manager.Queue()
+
+        n_splitter_processes = FILES.n_processes - 2  # two processes are used for reading from and writing to files
+        args = (interas_file, n_splitter_processes, q1_read, q2_split)
+        reader_process = multiprocessing.Process(target=cls._worker1_read_input_file, args=args)
+        reader_process.start()
+
+        args = (q3_write, n_splitter_processes)
+        writer_process = multiprocessing.Process(target=cls._worker3_merge_splitted_files, args=args)
+        writer_process.start()
+
+        subdir_inter = next(iter(outfiles.values())).parent  # in process: no access to FILES.get_subdir(Files.S_INTER)
+        # n_splitter_processes = min(n_splitter_processes, len(outfiles))  # not needed here; more processes are better
+        args = [(outfiles, chroms_list, used_cols, q1_read, q2_split, q3_write)] * n_splitter_processes
+        LOGGER.info(f'In total, creating {len(outfiles)} splitted files in {subdir_inter} '
+                    f'using {FILES.n_processes} parallel processes.\nThis may take a while. Please wait')
+        with(multiprocessing.Pool(n_splitter_processes)) as splitter_pool:
+            splitter_pool.starmap(cls._worker2_split_input, args)
+
+        reader_process.join()
+        writer_process.join()
+
+        n_buffers = 0
+        try:
+            for n_buffers in itertools.count():  # infinite loop with counter
+                buffer_name = q1_read.get_nowait()  # throws exception if empty
+                sm = SharedMemory(create=False, name=buffer_name)
+                sm.unlink()
+        except queue.Empty:  # if q1_read is empty
+            buffer_size_in_mb = cls.Buffer.SIZE_IN_MEGA_BYTES * n_buffers
+            LOGGER.info(f'Released {buffer_size_in_mb:,} MB ({n_buffers} buffers) '
+                        f'used by {FILES.n_processes} parallel processes.')
+
+    @classmethod
+    def _worker1_read_input_file(cls, interas_file, n_splitter_processes, q1_read, q2_split):
+
+        n_buffers = round(n_splitter_processes * 1.3)  # more buffers than workers to help prevent worker waiting time
+        for _ in range(n_buffers):
+            buffer_name = cls.Buffer.create_shared_memory().name
+            q1_read.put(buffer_name)  # put the new buffer into empty queue
+
+        buffer = cls.Buffer()
+        with io.FileIO(interas_file, 'rb') as in_f:  # FileIO supports "readinto" predefined buffer space
+            cls.__skip_leading_comment_lines(in_f)
+            for i in itertools.count():  # infinite loop with counter
+                shared_memory_name = q1_read.get(block=True)
+                buffer.set_shared_memory(shared_memory_name)
+                if 0 == buffer.read_into_buf_from(in_f, i):  # stop if the returned num of bytes read is zero
+                    q1_read.put(buffer.name)  # put back buffer to free up its shared_memory later
+                    q2_split.put(cls.__DONE)  # signal split workers to finish
+                    break
+                q2_split.put(buffer.name)
+
+    @classmethod
+    def __skip_leading_comment_lines(cls, interas_file_handle, comment=S.COMMENT_CHAR):
+        """Skips the leading comment lines, assuming no other comment lines occur later in the file"""
+        comment = bytearray(comment, 'utf-8')
+        last_pos = interas_file_handle.tell()
+        line = interas_file_handle.readline()
+        while line != '':
+            if line.startswith(comment):
+                last_pos = interas_file_handle.tell()
+                line = interas_file_handle.readline()
+            else:
+                interas_file_handle.seek(last_pos)  # put back the last line which is the first non-comment line
+                break
+
+    @classmethod
+    def _worker2_split_input(cls, outfiles: dict, chroms_list, used_cols: dict, q1_read, q2_split, q3_write):
+        # outfiles: e.g. {(chrII, +, -): 'path/to/file', ...}
+
+        chroms_categorical = pd.CategoricalDtype(categories=chroms_list)
+
+        chrom1, chrom2 = [col_num for col_num, col_name in used_cols.items() if col_name in S.CHROM_COLS.values]  # 1, 3
+        strand1, strand2 = [col_num for col_num, col_name in used_cols.items() if col_name in S.STRAND_COLS.values]
+
+        buffer = cls.Buffer()
+        while True:
+            buffer_name = q2_split.get(block=True)
+            if buffer_name == cls.__DONE:
+                q2_split.put(cls.__DONE)  # put it back in queue to signal other splitting workers to finish
+                q3_write.put(cls.__DONE)  # also signal writer worker to finish
+                break
+
+            buffer.set_shared_memory(buffer_name)
+
+            with io.BytesIO(buffer.buf[0:buffer.length]) as buf:  # low_memory=False below is set to suppress a warning
+                df = pd.read_csv(buf, usecols=used_cols.keys(), sep=S.FIELD_SEPARATOR, header=None, low_memory=False)
+            q1_read.put(buffer.name)  # now buffer can be reused by the reader worker
+
+            df[[chrom1, chrom2]] = df[[chrom1, chrom2]].astype(chroms_categorical)  # for faster filtering and comparing
+            df = df.dropna()  # drops any rows not containing chroms stated in chroms_categorical
+            df = df[df[chrom1] == df[chrom2]]  # fastest row filtering approach when used with categorical columns
+            output_chunks = dict()
+            for chrom_and_strands, chunk_df in df.groupby([chrom1, strand1, strand2]):
+                outfile = outfiles.get(chrom_and_strands)  # e.g., {(chrII, +, -): 'path/to/outfile'}
+                if outfile is None:
+                    continue
+                chunk_file = outfile.parent / f'{outfile.name}-{buffer.id}-{os.getpid()}'
+                chunk_df.to_csv(chunk_file, sep=S.FIELD_SEPARATOR, index=False, header=False)
+                output_chunks.update({outfile: chunk_file})
+
+            q3_write.put(output_chunks)
+
+    @classmethod
+    def _worker3_merge_splitted_files(cls, q3_write, n_splitter_processes):
+
+        n_finished_split_processes = 0
+        while True:
+            output_chunks = q3_write.get(block=True)
+            if output_chunks == cls.__DONE:
+                n_finished_split_processes += 1
+                if n_finished_split_processes < n_splitter_processes:
+                    continue
+                else:
+                    break
+
+            # todo efficiency: files should be saved in large chunks (e.g., 100 MB) here to make the next steps simpler
+            for outfile, chunk_file in output_chunks.items():
+                with open(outfile, 'ab', buffering=10_000_000) as fd_write:  # open for append
+                    with open(chunk_file, 'rb') as fd_read:
+                        shutil.copyfileobj(fd_read, fd_write, length=-1)  # read the entire file at once and copy it
+                    try:
+                        chunk_file.unlink()  # delete chunk file
+                    except:
+                        pass
+
+    @classmethod
+    def __worker3_write_splitted_strings(cls, q3_write, n_splitter_processes):
+
+        n_finished_split_processes = 0
+        while True:
+            output_chunks = q3_write.get(block=True)
+            if output_chunks == cls.__DONE:
+                n_finished_split_processes += 1
+                if n_finished_split_processes < n_splitter_processes:
+                    continue
+                else:
+                    break
+
+            for outfile, chunk_csv in output_chunks.items():
+                with open(outfile, 'a') as out_f:  # open for append
+                    out_f.write(chunk_csv)
+
+    @classmethod
+    def __concatenate(cls, outfile):
+        """e.g., concatenates all 'outfile-*' files into one file 'outfile' and save the file"""
+
+        import shutil
+        with open(outfile, 'wb', buffering=10_000_000) as fd_write:
+            for outfile_chunk in sorted(outfile.parent.glob(f'{outfile.name}-*')):
+                with open(outfile_chunk, 'rb') as fd_read:
+                    shutil.copyfileobj(fd_read, fd_write, length=-1)  # read the entire file at once and copy it
+                try:
+                    outfile_chunk.unlink()  # delete chunk file
+                except:
+                    pass
+
+    class Buffer:
+        BYTES_FOR_ID = 3  # Number of bytes reserved at the end of buffer to hold the id for each buffer content
+        BYTES_FOR_LENGTH = 5  # Number of bytes reserved at the end of buffer to hold the length of the buffer content
+        SIZE_IN_MEGA_BYTES = 10  # Estimated size of buffer in bytes. E.g. 100MB fits ~ 1 million lines, each 100 chars
+
+        def __init__(self, create=False):
+            self.__shared_memory = None
+            if create:
+                self.set_shared_memory(self.create_shared_memory().name)
+
+        def read_into_buf_from(self, infile: io.RawIOBase, content_id: int = 0) -> int:
+            n_bytes_read = infile.readinto(self.buf)  # overwrites id and length variables, so they must to be set later
+
+            self.set_id(content_id)  # MUST be after reading in data, otherwise gets overwritten
+
+            length = n_bytes_read
+            if length <= self.max_length:  # including length == 0, when no data is read in
+                self.__set_length(length)
+                return length
+
+            length = self.max_length
+            lf, cr = ord('\n'), ord('\r')  # Unix: \n,  Windows \r\n,  Classic Mac \r
+            for i in range(length - 1, 0, -1):  # reverse search for \n or \r
+                if self.buf[i] == lf or self.buf[i] == cr:  # checks for \n first because searching in reverse direction
+                    length = i + 1
+                    break
+
+            pos = infile.tell() - (n_bytes_read - length)
+            infile.seek(pos)  # put back the last incomplete line to be read in again next time
+
+            self.__set_length(length)
+            return length
+
+        @classmethod
+        def create_shared_memory(cls):
+            return SharedMemory(create=True, size=cls.SIZE_IN_MEGA_BYTES * 1_000_000)
+
+        def set_shared_memory(self, name):
+            """find and reconnect to a previously created shared memory, using name"""
+            self.__shared_memory = SharedMemory(create=False, name=name)
+
+        @property
+        def buf(self):
+            return self.__shared_memory.buf
+
+        @property
+        def name(self) -> str:
+            return self.__shared_memory.name
+
+        @property
+        def id(self):
+            start = - (self.BYTES_FOR_ID + self.BYTES_FOR_LENGTH)
+            end = - self.BYTES_FOR_LENGTH
+            int_bytes = self.__shared_memory.buf[start:end]  # read the last bytes before length bytes from buf
+            return int.from_bytes(int_bytes, byteorder='big', signed=False)
+
+        def set_id(self, content_id: int):
+            """Writes id at the end of shared_memory.buf just before length"""
+            max_content_id = 2 ** (8 * self.BYTES_FOR_ID) - 1
+            if not 0 <= content_id <= max_content_id:
+                raise ValueError(f'content_id must be between 0 and {max_content_id}')
+            start = - (self.BYTES_FOR_ID + self.BYTES_FOR_LENGTH)
+            end = - self.BYTES_FOR_LENGTH
+            self.__shared_memory.buf[start:end] = \
+                content_id.to_bytes(self.BYTES_FOR_ID, byteorder='big', signed=False)
+
+        def __set_length(self, length: int):
+            """Writes length at the end of shared_memory.buf just after id"""
+            if not 0 <= length <= self.max_length:
+                raise ValueError(f'length must be between 0 and {self.max_length}')
+            start = - self.BYTES_FOR_LENGTH
+            self.__shared_memory.buf[start:] = \
+                length.to_bytes(self.BYTES_FOR_LENGTH, byteorder='big', signed=False)
+
+        @property
+        def length(self) -> int:
+            int_bytes = self.__shared_memory.buf[-self.BYTES_FOR_LENGTH:]  # read the last bytes from buf
+            return int.from_bytes(int_bytes, byteorder='big', signed=False)
+
+        @property
+        def max_length(self) -> int:
+            return self.__shared_memory.buf.nbytes - self.BYTES_FOR_ID - self.BYTES_FOR_LENGTH
 
 
 class NucInteras:
@@ -688,16 +969,15 @@ class NucInteras:
         if should_create_nuc_interas_files:
             self.__interas_file = Path(interas_file).resolve(strict=True)
 
-            LOGGER.info('\nSplitting interaction file based on chrom and orientation.\n'
-                        'This may take several minutes or hours depending on your system and input file size.')
+            LOGGER.info('\nSplitting interaction file based on chrom and orientation.')
             start = timer()
-            self.__split_interas_file()
-            LOGGER.info(f'\nDone! Splitting task finished in {time_diff(start)}')
+            self.__split_interas_file__multiprocessing()
+            LOGGER.info(f'Done! Splitting task finished in {time_diff(start)}')
 
             LOGGER.info('\nFinding nucleosomes for interactions:')
             start = timer()
-            self.__create_nuc_interas_files()
-            LOGGER.info(f'\nDone! Finding nucleosomes finished in {time_diff(start)}')
+            self.__create_nuc_interas_files__multiprocessing()
+            LOGGER.info(f'Done! Finding nucleosomes finished in {time_diff(start)}')
 
     @property
     def name(self) -> str:
@@ -757,22 +1037,22 @@ class NucInteras:
         return df_nuc_interas
 
     @classmethod
-    def _convert_interas_to_nuc_interas(cls, nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom):
+    def _convert_interas_to_nuc_interas(
+            cls, nuc_interas_outfile, interas_infile, indexed_nucs_infile, chrom, keep_cache):
         """This function is meant to be used by multiprocessing.Pool"""
 
         df_interas = cls.__read_interas_file(interas_infile)
         df_nuc_interas = cls.__create_nuc_interas(df_interas, chrom, indexed_nucs_infile)
+        # print('.', end='')  # print a dot to show progress between to time consuming tasks
         df_nuc_interas.to_csv(nuc_interas_outfile, sep=S.FIELD_SEPARATOR, index=False, header=True)
-        if not S.TESTING_MODE:
+        if not keep_cache:
             try:
                 Path(interas_infile).unlink()  # remove the cached input_file to reduce runtime space requirements
             except Exception as e:
                 # LOGGER.error(e)  # The LOGGER object is not available processes, potentially running on other machines
                 print(e, file=sys.stderr)  # used instead of LOGGER.error(e)
 
-        print('.', end='')  # print a dot to show progress
-
-    def __create_nuc_interas_files(self):
+    def __create_nuc_interas_files__multiprocessing(self):
 
         subdir_inter = FILES.get_subdir(Files.S_INTER)
         subdir_nuc_inter = FILES.get_subdir(Files.S_NUC_INTER)
@@ -800,11 +1080,12 @@ class NucInteras:
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = subdir_nuc_inter / output_file
 
-            to_do_list.append((output_file, input_file, indexed_nucs_file, file_info.chrom))
-            LOGGER.info(f'Queued: creating nuc interaction file: {output_file}')
+            to_do_list.append((output_file, input_file, indexed_nucs_file, file_info.chrom, FILES.keep_cache))
+            # LOGGER.info(f'Queued: creating nuc interaction file: {output_file}')
 
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} files, using {n_processes} processors.\nPlease wait')
+        LOGGER.info(f'In total, creating {len(to_do_list)} nuc interaction files in {subdir_nuc_inter} '
+                    f'using {n_processes} parallel processes.\nThis may take a while. Please wait')
         with multiprocessing.Pool(n_processes) as pool:
             pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
 
@@ -821,8 +1102,8 @@ class NucInteras:
         except pd.errors.ParserError as parser_error:
             raise InputFileError(input_file) from parser_error
 
-        df_inter[0] = df_inter[0].astype(CategoricalDtype(ordered=True))  # chrom1
-        df_inter[2] = df_inter[2].astype(CategoricalDtype(ordered=True))  # chrom2
+        df_inter[0] = df_inter[0].astype(pd.CategoricalDtype(ordered=True))  # chrom1
+        df_inter[2] = df_inter[2].astype(pd.CategoricalDtype(ordered=True))  # chrom2
         df_inter.columns = schema.columns
         df_inter = df_inter.rename_axis(schema.index.name)
 
@@ -843,8 +1124,9 @@ class NucInteras:
         # Both Nucs and Interactions will use the same MultiIndex ['chrom', 'pos']
         # Make a MultiIndex ['chrom', 'pos'] for Nucs to make them similar to Interactions, simplifying their merger
         df_nucs['pos'] = df_nucs.start  # copy 'start' to 'pos' to make df_nucs and later df_inter alike
+        # df_nucs = df_nucs.query(f"chrom == '{chrom}'")  # too slow
+        df_nucs = df_nucs[df_nucs['chrom'] == chrom]
         df_nucs = df_nucs.reset_index().set_index(['chrom', 'pos'])  # .sort_index()
-        df_nucs = df_nucs.query(f'chrom == "{chrom}"')
 
         df_inter_stack = df_inter.stack(level='side').reset_index()  # 'side' becomes a col, with 'side1' or 'side2'
         df_inter_stack = df_inter_stack.set_index(['chrom', 'pos'])  # .sort_index()
@@ -875,7 +1157,20 @@ class NucInteras:
 
         return df_nuc_interas
 
-    def __split_interas_file(self):
+    def __split_interas_file__multiprocessing(self):
+        # decide if need to continue
+        outfiles = FILES.get_files_needing_refresh__dict(Files.S_INTER)
+        if not outfiles:
+            LOGGER.info('\nNo interaction cache files were updated')
+            return
+
+        _, used_cols = self.__validate_interas_file(self.__interas_file)
+
+        InterasFileSplitter.split_interas_file(outfiles, self.__interas_file, self.__chrom_list, used_cols.to_dict())
+
+        FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
+
+    def __split_interas_file__single_processor(self):
         # decide if need to continue
         if FILES.get_files_needing_refresh(Files.S_INTER).empty:
             LOGGER.info('\nNo interaction cache files were updated')
@@ -885,7 +1180,7 @@ class NucInteras:
 
         try:
             chunks = pd.read_csv(self.__interas_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
-                                 usecols=used_cols.index, chunksize=S.INPUT_CHUNK_LINES_READ, header=header_line_num)
+                                 usecols=used_cols.index, chunksize=1_000_000, header=header_line_num)
         except pd.errors.ParserError as parser_error:
             raise InputFileError(self.__interas_file) from parser_error
 
@@ -901,7 +1196,6 @@ class NucInteras:
                 for chrom_and_orientation, df in groups:
                     chrom = chrom_and_orientation[0]  # e.g., 'chrom21'
                     orientation = chrom_and_orientation[1:]  # e.g., ('+', '-')
-                    # TODO efficiency: needs multitasking
                     file = output_files.get(chrom_and_orientation)
                     if file is None:
                         working_file = FILES.get_working_files(chrom, orientation, Files.S_INTER).squeeze()
@@ -915,53 +1209,6 @@ class NucInteras:
 
                     # Here header=False because the code for bash is not writing out header (yet)
                     df.to_csv(file, sep=S.FIELD_SEPARATOR, index=False, header=False)
-
-        FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
-
-    def __split_interas_file_line_by_line(self):
-        # experimental method, potentially useful for multiprocessing
-
-        # decide if need to continue
-        if FILES.get_files_needing_refresh(Files.S_INTER).empty:
-            LOGGER.info('\nNo interaction cache files were updated')
-            return
-
-        self.__validate_interas_file(self.__interas_file)
-
-        chrom_set = set(self.__chrom_list)
-        output_files = {}
-        with open(self.__interas_file, 'r') as interas_file:
-
-            # First skip through all the comment lines
-            last_pos = interas_file.tell()
-            line = interas_file.readline()
-            while line != '':
-                if line.startswith(S.COMMENT_CHAR):
-                    last_pos = interas_file.tell()
-                    line = interas_file.readline()
-                else:
-                    interas_file.seek(last_pos)  # put back the last line which is the first non-comment line
-                    break
-
-            with contextlib.ExitStack() as cm:  # allows to open an unknown number of files
-                for line in interas_file:
-                    _, chrom1, pos1, chrom2, pos2, strand1, strand2, *_ = line.split(S.FIELD_SEPARATOR)
-
-                    if chrom1 == chrom2 and chrom1 in chrom_set:
-                        chrom_and_orientation = (chrom1, strand1, strand2)
-                        file = output_files.get(chrom_and_orientation)
-                        if file is None:
-                            working_file = FILES.get_working_files(chrom1, strand1+strand2, Files.S_INTER).squeeze()
-                            if working_file.empty or not working_file.needs_refresh:
-                                continue
-                            file = working_file.file_zip if FILES.zipped else working_file.file
-                            file = working_file.subdir / file
-                            open_file = gzip.open if FILES.zipped else open
-                            file = cm.enter_context(open_file(file, 'wt'))
-                            output_files[chrom_and_orientation] = file
-
-                    line = S.FIELD_SEPARATOR.join((chrom1, pos1, chrom2, pos2, strand1, strand2))
-                    file.write(line + '\n')
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
@@ -1025,9 +1272,6 @@ class NucInteras:
 
     def __repr__(self):
         return self.name + ' (nucleosome interactions)'
-    #     return (self.__name if self.__name else '') + '\n' + \
-    #            'At most,' + str(files.__working_files.shape[0]) + ' nucleosome interaction files)'
-    #     # str(self.__working_files.head(2).file) + '\n...\n(' + \
 
 
 class NucInteraMatrix:
@@ -1044,11 +1288,11 @@ class NucInteraMatrix:
 
         LOGGER.info('\nPreparing Nuc Interaction Matrices:')
         start = timer()
-        refreshed_files = self.__create_nuc_intera_matrix_files(keep_nucs_cols)
-        LOGGER.info(f'\nDone! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
+        refreshed_files = self.__create_nuc_intera_matrix_files__multiprocessing(keep_nucs_cols)
+        LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
 
         LOGGER.info(f'\nNumber of updated Nuc Interaction Matrices: {refreshed_files}')
-        LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self)}nucs * {len(self)}nucs.')
+        LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self):,} nucs * {len(self):,} nucs.')
         LOGGER.info(self)
 
     def read_nuc_intera_matrix_region(
@@ -1074,8 +1318,11 @@ class NucInteraMatrix:
         max_nuc_id = nucs.index[-1]
 
         ijv = self.read_nuc_intera_matrix(chrom, orientation)
-        ijv = ijv.query(f'{min_nuc_id} <= nuc_id1 <= {max_nuc_id}')
-        ijv = ijv.query(f'{min_nuc_id} <= nuc_id2 <= {max_nuc_id}')
+        # ijv = ijv.query(f'{min_nuc_id} <= nuc_id1 <= {max_nuc_id} and '
+        #                 f'{min_nuc_id} <= nuc_id2 <= {max_nuc_id}')   # this is very slow!
+        idx = (min_nuc_id <= ijv['nuc_id1']) & (ijv['nuc_id1'] <= max_nuc_id) & \
+              (min_nuc_id <= ijv['nuc_id2']) & (ijv['nuc_id2'] <= max_nuc_id)
+        ijv = ijv[idx]
 
         ijv = self.__append_nucs_cols_if_missing(ijv, nucs)
 
@@ -1150,6 +1397,7 @@ class NucInteraMatrix:
         """This function is meant to be used by multiprocessing.Pool"""
 
         df_nuc_intera_matrix = cls.__create_nuc_intera_matrix(nuc_interas_file, indexed_nucs_file, norm_distance)
+        # print('.', end='')  # print a dot to show progress between to time consuming tasks
         df_nuc_intera_matrix.to_csv(output_file, sep=S.FIELD_SEPARATOR, index=False, header=True)
         if not keep_cache:
             try:
@@ -1158,9 +1406,7 @@ class NucInteraMatrix:
                 # LOGGER.error(e)  # The LOGGER object is not available processes, potentially running on other machines
                 print(e, file=sys.stderr)  # used instead of LOGGER.error(e)
 
-        print('.', end='')  # print a dot to show progress
-
-    def __create_nuc_intera_matrix_files(self, keep_nucs_cols) -> int:
+    def __create_nuc_intera_matrix_files__multiprocessing(self, keep_nucs_cols) -> int:
         # decide if need to continue
         files_needing_refresh = FILES.get_files_needing_refresh(Files.S_MATRIX)
         if files_needing_refresh.empty:
@@ -1180,10 +1426,12 @@ class NucInteraMatrix:
             nuc_interas_file = NucInteras.get_nuc_interas_file(file_info.chrom, file_info.orientation)
 
             to_do_list.append((output_file, nuc_interas_file, indexed_nucs_file, FILES.norm_distance, FILES.keep_cache))
-            LOGGER.info(f'Queued: creating nuc interaction Matrix file: {output_file}')
+            # LOGGER.info(f'Queued: creating nuc interaction Matrix file: {output_file}')
 
+        subdir_matrix = FILES.get_subdir(Files.S_MATRIX)
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files, using {n_processes} processors.\nPlease wait')
+        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files in {subdir_matrix}, '
+                    f'using {n_processes} parallel processes.\nThis may take a while. Please wait')
         with multiprocessing.Pool(n_processes) as pool:
             pool.starmap(self._convert_nuc_interas_to_matrices, to_do_list)
 
