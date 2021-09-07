@@ -14,6 +14,7 @@ import itertools
 import logging
 import multiprocessing
 import os
+import platform
 import pprint
 import queue
 import re
@@ -85,6 +86,7 @@ class Files:
     S_NUC_INTER = 'state_nuc_inter'
     S_MATRIX = 'state_matrix'
     S_PLOT = 'state_plot'
+    ZIP_SUFFIX = '.gz'
 
     __IMP_COLS = pd.Index(  # important cols
         ['chrom', 'strands', 'orientation', 'file', 'file_zip', 'subdir', 'needs_refresh'])
@@ -250,6 +252,10 @@ class Files:
         self.set_input_interas_file(None)
         self.set_input_nucs_file(None)
 
+    @classmethod
+    def is_file_zipped(cls, file) -> bool:
+        return Path(file).suffix.endswith(cls.ZIP_SUFFIX)
+
     @property
     def zipped(self) -> bool:
         """Is output zipped?"""
@@ -286,10 +292,10 @@ class Files:
 
         file_name = Path(file_name)
         suffix = file_name.suffix
-        if not self.zipped and suffix == '.gz':
+        if not self.zipped and suffix == self.ZIP_SUFFIX:
             suffix = ''
-        elif self.zipped and suffix != '.gz':
-            suffix += '.gz'
+        elif self.zipped and suffix != self.ZIP_SUFFIX:
+            suffix += self.ZIP_SUFFIX
 
         return file_name.stem + suffix
 
@@ -390,11 +396,32 @@ class Files:
                         nucs_file = self.working_dir / self.indexed_nucs_file()
                         nucs_file.unlink(missing_ok=True)  # delete file
                     self.reset_input_file_names()  # resets both arguments to None
-                except Exception as e:
-                    message = 'Cannot remove some of the content in the working directory.\n' \
-                              f'Please remove "{self.working_dir}" manually and try again.'
-                    # LOGGER.error(message)
-                    raise RuntimeError(message) from e
+                except Exception:
+                    error_message = f'Not permitted to remove some of the content in the working directory.\n' \
+                                    f'Please remove "{self.working_dir}" manually and try again.'
+                    raise RuntimeError(error_message)
+
+            if self.__norm_distance is not None:
+                # delete all files containing a non-matching norm distance column
+                # for matrix_file in FILES.get_working_files(state=Files.S_MATRIX):
+                matrix_subdir = FILES.get_subdir(state=Files.S_MATRIX)
+                error_message = ''
+                for matrix_file in matrix_subdir.glob('*.txt'):
+                    try:
+                        header_only = pd.read_csv(matrix_file, sep=S.FIELD_SEPARATOR, nrows=0)
+                    except:
+                        extracted_norm_distance = None  # so that the matrix_file will be deleted next
+                    else:
+                        extracted_norm_distance = NucInteraMatrix.extract_norm_distance(header_only)
+                    if extracted_norm_distance != self.norm_distance:
+                        try:
+                            Path(matrix_file).unlink()  # remove matrix_file as it's norm_distance is wrong
+                        except Exception:
+                            error_message += f'{self.working_dir}\n'
+
+                if error_message:
+                    raise RuntimeError('Not permitted to remove the following file(s). '
+                                       'Please remove them manually and try again:\n' + error_message)
 
             # recreate sub-folders
             for _, subdir_info in self.__STATES.iterrows():
@@ -412,11 +439,9 @@ class Files:
             index=pd.MultiIndex.from_product([chrom_list, self.__STRAND2ORIENT.keys()], names=['chrom', 'strands']))
         df = df.reset_index()
         df['orientation'] = df.strands.map(self.__STRAND2ORIENT)
-        # suffix = '' if self.base_file_name.suffix == '.gz' else self.base_file_name.suffix  # remove .gz
-        # suffix += suffix if suffix == '.txt' else '.txt'  # add .txt if not already there
         suffix = '.txt'  # Regardless of what the original suffix was, replace it with .txt
         df['file'] = self.base_file_name.stem + '_' + df.chrom + '_' + df.orientation + suffix
-        df['file_zip'] = df.file + '.gz'
+        df['file_zip'] = df.file + self.ZIP_SUFFIX
 
         refresh_cols = self.__STATES.dropna()['refresh_col'].tolist()
         df[refresh_cols] = True  # makes three bool columns for file refreshing
@@ -454,10 +479,21 @@ class Files:
             if no_refresh_needed:
                 break
 
+    @staticmethod
+    def time_diff(start_time, end_time=None):
+        seconds = round((timer() if end_time is None else end_time) - start_time)
+        return f'{datetime.timedelta(seconds=seconds)} (h:m:s)'
 
-def time_diff(start_time, end_time=None):
-    seconds = round((timer() if end_time is None else end_time) - start_time)
-    return f'{datetime.timedelta(seconds=seconds)} (h:m:s)'
+    @staticmethod
+    def tabulate_dict(dictionary: dict, keys_included: list = None, left_pad: str = '| ') -> str:
+        if keys_included is None:
+            keys_included = dictionary.keys()
+        keys_width = max(map(len, keys_included))
+        dictionary = {k: dictionary[k] for k in keys_included}  # reorder according to keys_included
+        table = ''
+        for k, v in dictionary.items():
+            table += f'{left_pad}{k.rjust(keys_width)}  {v}\n'
+        return table
 
 
 class Chroms(abc.Sequence):
@@ -969,15 +1005,15 @@ class NucInteras:
         if should_create_nuc_interas_files:
             self.__interas_file = Path(interas_file).resolve(strict=True)
 
-            LOGGER.info('\nSplitting interaction file based on chrom and orientation.')
+            LOGGER.info('\nSplitting interaction file based on chrom and orientation:')
             start = timer()
             self.__split_interas_file__multiprocessing()
-            LOGGER.info(f'Done! Splitting task finished in {time_diff(start)}')
+            LOGGER.info(f'Done! Splitting task finished in {Files.time_diff(start)}')
 
             LOGGER.info('\nFinding nucleosomes for interactions:')
             start = timer()
             self.__create_nuc_interas_files__multiprocessing()
-            LOGGER.info(f'Done! Finding nucleosomes finished in {time_diff(start)}')
+            LOGGER.info(f'Done! Finding nucleosomes finished in {Files.time_diff(start)}')
 
     @property
     def name(self) -> str:
@@ -1161,7 +1197,7 @@ class NucInteras:
         # decide if need to continue
         outfiles = FILES.get_files_needing_refresh__dict(Files.S_INTER)
         if not outfiles:
-            LOGGER.info('\nNo interaction cache files were updated')
+            LOGGER.info('No interaction cache files were updated')
             return
 
         _, used_cols = self.__validate_interas_file(self.__interas_file)
@@ -1171,6 +1207,8 @@ class NucInteras:
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
     def __split_interas_file__single_processor(self):
+        # This is slow! Use __split_interas_file__multiprocessing() instead.
+
         # decide if need to continue
         if FILES.get_files_needing_refresh(Files.S_INTER).empty:
             LOGGER.info('\nNo interaction cache files were updated')
@@ -1203,8 +1241,8 @@ class NucInteras:
                             continue
                         file = working_file.file_zip if FILES.zipped else working_file.file
                         file = working_file.subdir / file
-                        open_file = gzip.open if FILES.zipped else open
-                        file = cm.enter_context(open_file(file, 'wt'))
+                        opener = gzip.open if FILES.zipped else open
+                        file = cm.enter_context(opener(file, 'wt'))
                         output_files[chrom_and_orientation] = file
 
                     # Here header=False because the code for bash is not writing out header (yet)
@@ -1289,11 +1327,12 @@ class NucInteraMatrix:
         LOGGER.info('\nPreparing Nuc Interaction Matrices:')
         start = timer()
         refreshed_files = self.__create_nuc_intera_matrix_files__multiprocessing(keep_nucs_cols)
-        LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {time_diff(start)}')
+        if refreshed_files == 0:
+            LOGGER.info('No interaction cache files were updated')
+        LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {Files.time_diff(start)}')
 
-        LOGGER.info(f'\nNumber of updated Nuc Interaction Matrices: {refreshed_files}')
-        LOGGER.info(f'\nNuc Interaction Matrices ready with total size: {len(self):,} nucs * {len(self):,} nucs.')
-        LOGGER.info(self)
+        LOGGER.info(f'\nNucleosome interaction matrices ready with total size: {len(self):,} nucs * {len(self):,} nucs')
+        # LOGGER.info(self)
 
     def read_nuc_intera_matrix_region(
             self, chrom: str, start_region: int, end_region: int, orientation='all') -> Optional[pd.DataFrame]:
@@ -1562,7 +1601,7 @@ class NucInteraMatrix:
         return len(self.__nucs)
 
     def __repr__(self):
-        return 'Nucleosome interaction matrix created from: \n' + self.name
+        return 'Nucleosome interaction matrices created using: \n' + self.name
 
 
 class CLI:
@@ -1588,36 +1627,24 @@ class CLI:
 
     @classmethod
     def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir,
-                                norm_distance, keep_nucs_cols, keep_cache, n_processes, zipped, refresh):
+                                norm_distance, keep_nucs_cols, keep_cache, n_processes, refresh, zipped=False):
 
         start = timer()
+        start_time = datetime.datetime.now().isoformat(timespec='seconds')
 
         FILES.reset_all(base_file_name=interas_file, working_dir=working_dir, norm_distance=norm_distance,
                         keep_cache=keep_cache, n_processes=n_processes, zipped=zipped, refresh=refresh)
 
-        # delete all files containing a non-matching norm distance column
-        # for matrix_file in FILES.get_working_files(state=Files.S_MATRIX):
-        matrix_subdir = FILES.get_subdir(state=Files.S_MATRIX)
-        for matrix_file in matrix_subdir.glob('*.txt'):
-            try:
-                header_only = pd.read_csv(matrix_file, sep=S.FIELD_SEPARATOR, nrows=0)
-            except:
-                extracted_norm_distance = None  # so that the matrix_file will be deleted next
-            else:
-                extracted_norm_distance = NucInteraMatrix.extract_norm_distance(header_only)
-            if extracted_norm_distance != norm_distance:
-                try:
-                    Path(matrix_file).unlink()  # remove matrix_file as it's norm_distance is wrong
-                except Exception as e:
-                    LOGGER.error(e)
-
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info('\n\n\n' + datetime.datetime.now().isoformat())
-        LOGGER.info(f"= = = = = Arguments for command '{command}':")
-        LOGGER.info(pprint.pformat(locals()))  # log all the arguments
-        LOGGER.info(f'Logging to file {log_file_name}\n')
+        LOGGER.info(f'\n\n _ _ _ _ _ Started command: {command} _ _ _ _ _')
+        vars_to_log = ['start_time', 'n_processes', 'norm_distance', 'keep_nucs_cols', 'refresh', 'keep_cache',
+                       'zipped', 'chroms_file', 'nucs_file', 'interas_file', 'working_dir', 'log_file_name']
+        if n_processes == 0:
+            vars_to_log.remove('n_processes')
+        LOGGER.info(Files.tabulate_dict(locals(), vars_to_log))  # log important arguments and variables
+        # LOGGER.info(f'Logging to file {log_file_name}\n')
 
         nucs = Nucs(nucs_file=nucs_file, chroms_file=chroms_file)
         nuc_interas = NucInteras(interas_file=interas_file, nucs=nucs, refresh=refresh)
@@ -1643,7 +1670,7 @@ class CLI:
         cache_dir = FILES.working_dir / 'cache'
         LOGGER.info(f'\nPrepared working directory: {FILES.working_dir}')
         if FILES.keep_cache:
-            LOGGER.info('\nThe cache files have not been removed automatically. ')
+            LOGGER.info('\nTo save space, use the --no-cache flag to remove cache files automatically.')
             LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
         else:
             try:
@@ -1653,7 +1680,7 @@ class CLI:
                 LOGGER.error(e)
                 LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
 
-        LOGGER.info(f"\n = = = = = Finished command '{command}' in {time_diff(start)}")
+        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}")
 
     @classmethod
     def handler_plot_command_testing(cls, command, working_dir, chrom, start_region, end_region, prefix, save_only):
@@ -1680,16 +1707,20 @@ class CLI:
     @classmethod
     def handler_plot_command(cls, command, working_dir, chrom, start_region, end_region, prefix, save_only):
         start = timer()
+        start_time = datetime.datetime.now().isoformat(timespec='seconds')
 
         FILES.reset_all(working_dir=working_dir)
 
         log_file_name = FILES.working_dir / (FILES.base_file_name.stem + '.log')
         handler_log_file = logging.FileHandler(filename=log_file_name, mode='a')
         LOGGER.addHandler(handler_log_file)
-        LOGGER.info('\n\n\n' + datetime.datetime.now().isoformat())
-        LOGGER.info(f"= = = = = Arguments for command '{command}':")
-        LOGGER.info(pprint.pformat(locals()))  # log all the arguments
-        LOGGER.info(f'Logging to file {log_file_name}.\n')
+        LOGGER.info(f'\n\n _ _ _ _ _ Started command: {command} _ _ _ _ _')
+        n_processes = 0
+        vars_to_log = ['start_time', 'n_processes', 'chrom', 'start_region', 'end_region',
+                       'prefix', 'working_dir', 'log_file_name']
+        if n_processes == 0:
+            vars_to_log.remove('n_processes')
+        LOGGER.info(Files.tabulate_dict(locals(), vars_to_log))  # log important arguments and variables
 
         nucs = Nucs()  # loads nucs from the working directory
         nuc_interas = NucInteras(nucs=nucs, refresh=False)
@@ -1723,7 +1754,7 @@ class CLI:
             LOGGER.warning('\n\nNOTE: No plots have been produced because no data is available. '
                            'You many want to consider expanding the chromosome region of study.')
 
-        LOGGER.info(f"\n = = = = = Finished command '{command}' in {time_diff(start)}")
+        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}")
 
     @classmethod
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_name, save_only):
@@ -1874,9 +1905,9 @@ class CLI:
         p_overlaid_norm.legend.location = 'bottom_left'
         p_overlaid_norm.legend.click_policy = 'hide'
 
-        last_tabs = len(tabs) - 1
+        last_tab = len(tabs) - 1
         tabs = Tabs(tabs=tabs)
-        tabs.active = last_tabs
+        tabs.active = last_tab
 
         if save_only:
             save(tabs)  # only save the plot
@@ -1971,8 +2002,10 @@ class CLI:
                     depends on the number of CPU cores and the amount of memory available on the system. The default
                     value is 0 (zero), which means the program attempts to guess a reasonable number of processes.""",
                 '--zip': """
-                    Compress intermediary and cache files using gzip. Zipping files saves space but requires more time
-                    to write and read files.""",
+                    Compress intermediary and cache files using gzip. If these files already exist, you need to 
+                    use the --refresh flag to regenerate them in zipped format. Zipping files saves space but requires 
+                    more time to write and read files. """
+                    'BUG: zipping does not currently work under macOS!' if platform.system() == 'Darwin' else '',
                 '--refresh': """
                     This will start fresh, re-computing all the intermediate files such as the nuc-nuc matrices.
                     WARNING: Refreshing starts from scratch and may take a long time to complete,
@@ -2046,10 +2079,11 @@ class CLI:
         a = '--multiprocessing'  # and '-m'
         commands[c].add_argument(
             a[1:3], a, help=h[c]['args'][a], metavar='<processes>', dest='n_processes', type=int, default=0)
-        a = '--zip'  # and '-z'
-        commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
         a = '--refresh'  # don't offer -r option to avoid accidental refreshing
         commands[c].add_argument(a, help=h[c]['args'][a], default=False, action='store_true')
+        if platform.system() != 'Darwin':  # todo BUG: zipping does not currently work under macOS!
+            a = '--zip'  # and '-z'
+            commands[c].add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true', dest='zipped')
 
         c = 'plot'  # c for Command
         a = 'working_dir'  # a for Argument
