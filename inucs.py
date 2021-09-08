@@ -282,11 +282,22 @@ class Files:
 
     @classmethod
     def combined_orientations(cls) -> list:
-        return list(cls.__ORIENT2STRAND.keys())  # 'inner' 'outer' 'right' 'left' 'tandem' 'all'
+        return [k for k in cls.__ORIENT2STRAND.keys() if k not in cls.orientations()]  # 'tandem' 'all'
+        # return list(cls.__ORIENT2STRAND.keys())  # 'inner' 'outer' 'right' 'left' 'tandem' 'all'
 
     @classmethod
     def get_strands(cls, orientation) -> list:
         return cls.__ORIENT2STRAND.get(orientation)
+
+    @classmethod
+    def get_orientation(cls, strands) -> str:  # e.g. '++' -> 'right'
+        return cls.__STRAND2ORIENT.get(tuple(strands))
+
+    @classmethod
+    def break_combined_orientation(cls, combined_orientation: str) -> list:  # e.g. 'tandem' -> ['right', 'left']
+        strands_list = cls.get_strands(combined_orientation)  # 'tandem' -> ['++', '--']
+        orients_list = [cls.get_orientation(strands) for strands in strands_list]  # e.g. ['right', 'left']
+        return orients_list
 
     def fix_file_zip_suffix(self, file_name):
 
@@ -1328,7 +1339,7 @@ class NucInteraMatrix:
         start = timer()
         refreshed_files = self.__create_nuc_intera_matrix_files__multiprocessing(keep_nucs_cols)
         if refreshed_files == 0:
-            LOGGER.info('No interaction cache files were updated')
+            LOGGER.info('No Nuc Interaction Matrix files were updated')
         LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {Files.time_diff(start)}')
 
         LOGGER.info(f'\nNucleosome interaction matrices ready with total size: {len(self):,} nucs * {len(self):,} nucs')
@@ -1405,16 +1416,23 @@ class NucInteraMatrix:
 
             matrices.append(ijv)
 
-        if len(matrices) == 0:
-            return self.__EMPTY
+        ijv = self.combine_nuc_intera_matrices(matrices)
 
-        ijv = pd.concat(matrices, axis=0, ignore_index=True, sort=False)
+        return ijv
 
-        norm_distance = self.extract_norm_distance(ijv)
+    @classmethod
+    def combine_nuc_intera_matrices(cls, nuc_intera_matrices: list) -> pd.DataFrame:
+
+        if not nuc_intera_matrices:  # if None or empty list
+            return cls.__EMPTY
+
+        ijv = pd.concat(nuc_intera_matrices, axis=0, ignore_index=True, sort=False)
+
+        norm_distance = cls.extract_norm_distance(ijv)
         if norm_distance is None:
             raise RuntimeError(' '.join(f"""
-                There most be exactly one norm column.
-                Consider running prepare with --refresh flag.""".split()))
+                There most be exactly one norm column. 
+                Please consider refreshing your working directory using "prepare --refresh" """.split()))
         S.set_norm_col_name(norm_distance)
 
         # for groupby aggregates: set 'first' for all cols, then overwrite that for some cols
@@ -1451,7 +1469,8 @@ class NucInteraMatrix:
         if files_needing_refresh.empty:
             return 0
         if FILES.norm_distance is None:  # so we are not here via 'prepare' but some files are missing
-            raise RuntimeError("Some matrix files are missing. Consider running prepare with --refresh flag.")
+            raise RuntimeError('Some matrix files are missing. '
+                               'Please consider refreshing your working directory using "prepare --refresh"')
 
         indexed_nucs_file = FILES.indexed_nucs_file(fullpath=True) if keep_nucs_cols else None
         to_do_list = []
@@ -1662,7 +1681,7 @@ class CLI:
                 'Error: Some expected matrix files are missing:'
                 '\n'.join(missing_files) + '\n' +
                 'Could not produce expected matrix files! \n'
-                'Consider running prepare with --refresh flag.')
+                'Please consider refreshing your working directory using "prepare --refresh"')
 
         if len(nuc_intera_matrix) == 0:
             LOGGER.warning('\nWARNING: The produced matrix is empty!')
@@ -1699,7 +1718,7 @@ class CLI:
             submatrices[orient] = pd.read_csv(f, S.FIELD_SEPARATOR)
 
         # reorder submatrices in the predefined order
-        submatrices = {orient: submatrices[orient] for orient in Files.combined_orientations()}
+        submatrices = {orient: submatrices[orient] for orient in Files.orientations() + Files.combined_orientations()}
 
         cls.make_heat_map(submatrices, chrom, start_region, end_region, output_name, save_only)
         print(files)
@@ -1726,30 +1745,45 @@ class CLI:
         nuc_interas = NucInteras(nucs=nucs, refresh=False)
         nuc_intera_matrix = NucInteraMatrix(nuc_interas=nuc_interas, nucs=nucs)
 
+        LOGGER.info(f'\nSelecting nuc interaction submatrices for plotting')
+
         # output_name = Path(Path(output_name).name)  # dismiss the path to just save in working dir
         # output_name = Path(f'{output_name.stem}_{chrom}_{start_region}_{end_region}{output_name.suffix}')
         output_name = f'{prefix}_{chrom}_{start_region}_{end_region}'
-        submatrices = dict()
-        for orient in Files.combined_orientations():  # includes 'all' and 'tandem'
-            # output_with_orient = Path(f'{output_name}_{orient}')
-            # if output_with_orient.suffix != '.txt':
-            #     output_with_orient = Path(output_with_orient.name + '.txt')
+        orient_2_submatrix = dict()
+        for orient in Files.orientations():  # 'inner', 'outer', 'right', 'left'
+            start_ = timer()
             output_with_orient = FILES.working_dir / f'{output_name}_{orient}.txt'
 
             # TODO efficiency: needs multitasking: for reading and saving files in parallel
-            # TODO efficiency: this approach reads some files two or three times because of 'all' and 'tandem'
             submatrix_ijv = nuc_intera_matrix.read_nuc_intera_matrix_region(chrom, start_region, end_region, orient)
 
             if submatrix_ijv is None or len(submatrix_ijv) == 0:
-                LOGGER.info(f'\nNo records found for, {output_with_orient}')
+                LOGGER.info(f'No records found for, {output_with_orient}')
             else:
                 submatrix_ijv.to_csv(output_with_orient, S.FIELD_SEPARATOR, header=True, index=False)
-                submatrices[orient] = submatrix_ijv
+                orient_2_submatrix[orient] = submatrix_ijv
                 LOGGER.info(f'{len(submatrix_ijv)} lines saved to file:  {output_with_orient}')
+                LOGGER.info(f"time: {Files.time_diff(start_)}")
+
+        for combined_orient in Files.combined_orientations():  # 'tandem', 'all'
+            start_ = timer()
+            output_with_orient = FILES.working_dir / f'{output_name}_{combined_orient}.txt'
+
+            orient_list = Files.break_combined_orientation(combined_orient)  # e.g. 'tandem' -> ['right', 'left']
+            submatrices = [orient_2_submatrix[orient] for orient in orient_list if orient in orient_2_submatrix]
+            if len(submatrices) == 0:
+                LOGGER.info(f'No records found for, {output_with_orient}')
+            else:
+                submatrix_ijv = nuc_intera_matrix.combine_nuc_intera_matrices(submatrices)
+                submatrix_ijv.to_csv(output_with_orient, S.FIELD_SEPARATOR, header=True, index=False)
+                orient_2_submatrix[combined_orient] = submatrix_ijv
+                LOGGER.info(f'{len(submatrix_ijv)} lines saved to file:  {output_with_orient}')
+                LOGGER.info(f"time: {Files.time_diff(start_)}")
 
         # create the Heat Map:
-        if len(submatrices) > 0:
-            cls.make_heat_map(submatrices, chrom, start_region, end_region, output_name, save_only)
+        if len(orient_2_submatrix) > 0:
+            cls.make_heat_map(orient_2_submatrix, chrom, start_region, end_region, output_name, save_only)
         else:
             LOGGER.warning('\n\nNOTE: No plots have been produced because no data is available. '
                            'You many want to consider expanding the chromosome region of study.')
@@ -1835,7 +1869,7 @@ class CLI:
         tabs = list()
         tabs.append(Panel(child=lyt, title='Overlaid', closable=False))
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
-            orient_label = f"{orient} ({','.join(FILES.get_strands(orient))})".capitalize()
+            orient_label = f"{orient} ({','.join(Files.get_strands(orient))})".capitalize()
             title = f"Nuc-Nuc Interactions for range: {chrom},{start_region}-{end_region} and orient: {orient_label}"
 
             min_arcsinh_counts, max_arcsinh_counts = ijv['arcsinh_counts'].describe()[['min', 'max']]
