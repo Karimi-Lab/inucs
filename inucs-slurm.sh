@@ -1,18 +1,19 @@
 #!/bin/bash -l
 #SBATCH --job-name=inucs
-#SBATCH --mem=44G
-#SBATCH --output=slurm-4DNFI1O6IL1Q.pairs.gz.log
-# From man sbatch: SBATCH --mem=0
-# "A memory size specification of zero is treated as a special case and grants the job access to all of the memory on each node."
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=100
+#SBATCH --ntasks=100
+#SBATCH --mem=600G
+#SBATCH --output=slurm-4DNFI1O6IL1Q.pairs.log-20210909
+
 echo "Server $HOSTNAME. Starting"
 echo 
 
 conda activate inucs
 
-# ./inucs.py prepare --help
-time python3.8 ./inucs.py prepare data/H1_chromosome.txt data/H1_nucleosome.txt data/4DNFI1O6IL1Q.pairs.gz -d data/4DNFI1O6IL1Q.pairs.gz.inucs
+time python3.9 ./inucs.py prepare --multiprocessing 100 data/H1_chromosome.txt data/H1_nucleosome.txt data/4DNFI1O6IL1Q.pairs -d data/4DNFI1O6IL1Q.pairs.inucs
 
-time python3.8 ./inucs.py plot data/4DNFI1O6IL1Q.pairs.gz.inucs chr2 27325465 27442377 --save
+time python3.9 ./inucs.py plot data/4DNFI1O6IL1Q.pairs.inucs chr5 62380000 62440000 --save
 
 echo 
 echo "Server $HOSTNAME. Finished"
