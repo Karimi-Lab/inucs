@@ -2137,8 +2137,10 @@ class CLI:
                     plot command and can be deleted manually if desired.""",
                 '--multiprocessing': """
                     Maximum number of processes (one per CPU core) that simultaneously analyse the data. Typically, this
-                    depends on the number of CPU cores and the amount of memory available on the system. The default
-                    value is 0 (zero), which means the program attempts to guess a reasonable number of processes.""",
+                    depends on the number of CPU cores and the amount of memory available on the system. For very large 
+                    input files, the recommended number of processes is one per 5 GB of RAM available (e.g., use -m 12 
+                    on a system with 60 GB of free RAM). The default value is 0 (zero), which means the program attempts
+                    to guess a reasonable number of processes.""",
                 '--zip': """
                     Compress intermediary and cache files using gzip. If these files already exist, you need to 
                     use the --refresh flag to regenerate them in zipped format. Zipping files saves space but requires 
