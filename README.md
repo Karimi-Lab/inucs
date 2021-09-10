@@ -524,7 +524,7 @@ The time for `plot` took just under *3 minutes*.
 
 |                    | *S. cerevisiae* | Human                    |
 | ------------------ | ----------------- | ------------------------ |
-| Num of *Cores* used<br/>(on a MacPro Book:<br/>Intel Core i9 with 64 GB RAM) | 6 hyperthreaded cores<br/>(or 3 physical cores) | 12 hyperthreaded cores<br/>(or 6 physical cores) |
+| Num of *Cores* used<br/>(on a MacBook Pro:<br/>Intel Core i9 with 64 GB RAM) | 6 hyperthreaded cores<br/>(or 3 physical cores) | 12 hyperthreaded cores<br/>(or 6 physical cores) |
 | Nucleosomes        | 77,060            | 13,811,032               |
 | Interactions pairs | 24,163,427        | 3,220,503,431            |
 | Nucleosome interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
