@@ -130,12 +130,14 @@ class Files:
             S.set_norm_col_name(norm_distance)
 
         if n_processes < 1:  # default value is 0
-            self.__n_processes = os.cpu_count() - 1
-            # self.__n_processes = min(10, self.__n_processes)
+            self.__n_processes = min(20, os.cpu_count() - 1)  # on a large server, limit num of cores used by default
         elif n_processes > os.cpu_count():
             self.__n_processes = os.cpu_count()
         else:
             self.__n_processes = n_processes
+
+        if self.__n_processes < 3:
+            raise ValueError(f'Num of processes cannot be {self.__n_processes}. It has to be at least 3.')
 
         wd_suffix = self.__WORKING_DIR_SUFFIX
         if base_file_name and working_dir:
@@ -587,7 +589,7 @@ class Nucs:
             FILES.set_input_nucs_file(nucs_file=nucs_file)
 
         if verbose:
-            LOGGER.info(f'\nNucs file read: "{self.name}" containing {len(self):,} nucleosomes.')
+            LOGGER.info(f'\nNucs file read: "{self.name}" containing {len(self):,} nucleosomes:')
             LOGGER.info(self)
 
     @classmethod
@@ -760,24 +762,21 @@ class InterasFileSplitter:
         subdir_inter = next(iter(outfiles.values())).parent  # in process: no access to FILES.get_subdir(Files.S_INTER)
         # n_splitter_processes = min(n_splitter_processes, len(outfiles))  # not needed here; more processes are better
         args = [(outfiles, chroms_list, used_cols, q1_read, q2_split, q3_write)] * n_splitter_processes
-        LOGGER.info(f'In total, creating {len(outfiles)} splitted files in {subdir_inter} '
-                    f'using {FILES.n_processes} parallel processes.\nThis may take a while. Please wait')
+        LOGGER.info(f'In total, creating {len(outfiles)} splitted files using {FILES.n_processes} parallel processes:'
+                    f'\n\t{subdir_inter}\nThis may take a while. Please wait')
         with(multiprocessing.Pool(n_splitter_processes)) as splitter_pool:
             splitter_pool.starmap(cls._worker2_split_input, args)
 
         reader_process.join()
         writer_process.join()
 
-        n_buffers = 0
         try:
-            for n_buffers in itertools.count():  # infinite loop with counter
+            while True:
                 buffer_name = q1_read.get_nowait()  # throws exception if empty
-                sm = SharedMemory(create=False, name=buffer_name)
-                sm.unlink()
+                shm = SharedMemory(create=False, name=buffer_name)
+                shm.unlink()
         except queue.Empty:  # if q1_read is empty
-            buffer_size_in_mb = cls.Buffer.SIZE_IN_MEGA_BYTES * n_buffers
-            LOGGER.info(f'Released {buffer_size_in_mb:,} MB ({n_buffers} buffers) '
-                        f'used by {FILES.n_processes} parallel processes.')
+            pass
 
     @classmethod
     def _worker1_read_input_file(cls, interas_file, n_splitter_processes, q1_read, q2_split):
@@ -1021,7 +1020,7 @@ class NucInteras:
             self.__interas_file = Path(interas_file).resolve(strict=True)
 
             if verbose:
-                LOGGER.info('\nSplitting interaction file based on chrom and orientation:')
+                LOGGER.info('\nSplitting interaction file based on chrom and orientation')
 
             start = timer()
             self.__split_interas_file__multiprocessing()
@@ -1029,7 +1028,7 @@ class NucInteras:
             if verbose:
                 LOGGER.info(f'Done! Splitting task finished in {Files.time_diff(start)}')
 
-                LOGGER.info('\nFinding nucleosomes for interactions:')
+                LOGGER.info('\nFinding nucleosomes for interactions')
 
             start = timer()
             self.__create_nuc_interas_files__multiprocessing()
@@ -1087,7 +1086,7 @@ class NucInteras:
         #     raise RuntimeError(f"Not all chrom1 and chrom2 values are equal in {nuc_interas_file}")
 
         df_nuc_interas['counts'] = 1  # initially every row is counted as 1
-        df_nuc_interas['dist_sum'] = (df_nuc_interas['pos1'] - df_nuc_interas['pos2']).abs()  # location distance
+        df_nuc_interas['dist_sum'] = (df_nuc_interas['pos1'] - df_nuc_interas['pos2']).abs()  # calc location distance
 
         df_nuc_interas = df_nuc_interas[['nuc_id1', 'nuc_id2', 'counts', 'dist_sum']]  # drop extra columns
 
@@ -1177,8 +1176,8 @@ class NucInteras:
             # LOGGER.info(f'Queued: creating nuc interaction file: {output_file}')
 
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} nuc interaction files in {subdir_nuc_inter} '
-                    f'using {n_processes} parallel processes.\nThis may take a while. Please wait')
+        LOGGER.info(f'In total, creating {len(to_do_list)} nuc interaction files using {n_processes} '
+                    f'parallel processes:\n\t{subdir_nuc_inter}\nThis may take a while. Please wait')
         with multiprocessing.Pool(n_processes) as pool:
             pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
 
@@ -1190,8 +1189,8 @@ class NucInteras:
         schema = cls.schema()
 
         try:
-            df_inter = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR, header=None)
-            # usecols=range(schema.columns.size), header=None)  # not needed as strands are not saved anymore
+            df_inter = pd.read_csv(input_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR, header=None, )
+            # usecols=range(schema.columns.size))  # not needed as strands are not saved anymore
         except pd.errors.ParserError as parser_error:
             raise InputFileError(input_file) from parser_error
 
@@ -1387,7 +1386,7 @@ class NucInteraMatrix:
             return
 
         if verbose:
-            LOGGER.info('\nPreparing Nuc Interaction Matrices:')
+            LOGGER.info('\nPreparing Nuc Interaction Matrices')
 
         start = timer()
         refreshed_files = self.__create_nuc_intera_matrix_files__multiprocessing(keep_nucs_cols)
@@ -1477,8 +1476,8 @@ class NucInteraMatrix:
                                chrom, start_region, end_region))
 
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'\nSelecting {len(to_do_list)} nuc interaction submatrices for plotting in {output_file.parent}, '
-                    f'using {n_processes} parallel processes.\nThis may take a while. Please wait')
+        LOGGER.info(f'\nSelecting {len(to_do_list)} nuc interaction submatrices for plotting using {n_processes} '
+                    f'parallel processes:\n\t{output_file.parent}\nThis may take a while. Please wait')
         with multiprocessing.Pool(n_processes) as pool:
             success = pool.starmap(cls.write_submatrix_for_orients, to_do_list)
 
@@ -1633,8 +1632,8 @@ class NucInteraMatrix:
 
         subdir_matrix = FILES.get_subdir(Files.S_MATRIX)
         n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files in {subdir_matrix}, '
-                    f'using {n_processes} parallel processes.\nThis may take a while. Please wait')
+        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files using {n_processes} parallel processes:'
+                    f'\n\t{subdir_matrix}\nThis may take a while. Please wait')
         with multiprocessing.Pool(n_processes) as pool:
             pool.starmap(self._convert_nuc_interas_to_matrices, to_do_list)
 
