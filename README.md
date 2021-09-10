@@ -528,7 +528,7 @@ The time for `plot` took just under *3 minutes*.
 | Nucleosomes        | 77,060            | 13,811,032               |
 | Interactions pairs | 24,163,427        | 3,220,503,431            |
 | Nucleosome interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
-| Time to prepare    | 4 minutes         | 980 minutes (~16  hours) |
+| Time to prepare    | 4 minutes         | 3 hours |
 | Time to plot       | 15 seconds        | 3.5 minutes              |
 
 ------
