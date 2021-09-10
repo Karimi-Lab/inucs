@@ -465,7 +465,7 @@ We are planning for the next version of `inucs` continue to improve the efficien
 
 
 ### 3.5 Scalability
-We have put a large effort to make `inucs` scalable as much as possible. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, in our testing, `inucs` could process more than 3.2 billion human chromosome interactions (over 261 GB file size), while running a MacBook Pro laptop with 64 GB of RAM in 3 hours. (Please see below for more information.)
+We have put a large effort to make `inucs` scalable as much as possible. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, in our testing, `inucs` could process more than 3.2 billion human chromosome interactions (over 54 GB file size), while running a MacBook Pro laptop with 64 GB of RAM in 3 hours. (Please see below for more information.)
 
 Scalability in `inucs` is achieved primarily by breaking down the data into smaller pieces in different stages of running the program. Therefore, at any given time, there is only some manageable chunk of data in memory, and the intermediary results are constantly written on storage space and read back in as needed.
 
