@@ -441,6 +441,8 @@ This is a *sparse matrix* representation of the nucleosome interactions count ma
 
 ### 3.4 Efficiency
 
+#### Exploiting Hardware Vectorization
+
 The sorting-based algorithm discussed above is used in `inucs`. It relies on sorting to carry out all he heavy lifting parts of the algorithm and it has the same time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)"> (e.g., using merge sort) as the the binary search based algorithm that we discussed earlier.  However, even though the time complexity is not directly improved, each step of the algorithm is performed much faster (between one to two orders of magnitude) due to use of hardware-supported vectorization, which modern CPUs support at hardware level. "Vectorization is the process of converting an algorithm from operating on a single value at a time to operating on a set of values (vector) at one time." [[Intel](https://software.intel.com/content/www/us/en/develop/articles/vectorization-a-key-tool-to-improve-performance-on-modern-cpus.html)] Such hardware-level vectorized operations are sometimes referred to SIMD (single instruction, multiple data) operations, and are significantly faster! Furthermore, Python (as with many other modern languages) takes advantage of the power of SIMD operations in important libraries such as Pandas/NumPy (e.g., see this [NumPy code here](https://github.com/numpy/numpy/blob/main/numpy/core/src/umath/simd.inc.src)).
 
 In other words, the sorting-based algorithm used in inucs takes advantage of hardware-supported vectorization through Pandas/NumPy libraries. In addition, there has been considerable work put into sorting algorithms, e.g. merge sort has a time complexity of <img src="https://render.githubusercontent.com/render/math?math=O(n\ log\ n)">.
@@ -449,18 +451,21 @@ In short, both algorithms discussed above, namely, binary search based algorithm
 
 ***Example 3:*** In Example 2, we assumed that each step in the binary search based algorithm would take one millisecond, and for one billion interaction pairs, that algorithm could take about 9 million seconds or about *3.5 months* to complete. Now, assume  that the sorting based algorithm takes the same number of steps, but through use of hardware-supported vectorization, each step is performed 100 times faster. That means, instead of 9 million seconds, the sorting based algorithm will take 90,000 seconds or 25 hours. That is, vectorization has helped to reduce the total time needed from about *3.5 months* to about *1 day*.
 
+#### Parallelization
+
+The performance of `inucs`  has been greatly improved using parallelization, where the algorithm breaks down, for example, the large interaction pairs input files, and process the chunks in separate hardware cores simultaneously. This means the performance of `inucs` can greatly utilize the power of stronger servers with higher number of cores and RAM.
+
 #### Future Efficiency Improvements:
 
 We are planning for the next version of `inucs` continue to improve the efficiency through different means such as:
 
 - Reduce the size of the tables that need to be sorted, by *reusing* parts of the tables are that already sorted, which can be *linearly* merged together.
-- Add support for parallelism for higher utilization of modern multicore CPUs.
-- Make use of lower level libraries such as Cython to improve efficiency of key areas in the algorithm which are most consuming.
-- Improve the efficiency of the algorithms that break down the large interaction pairs input files to achieve scalability (see next subsection below).
+- Further improve the support for parallelism for higher utilization of modern multicore CPUs.
+- Make use of lower level libraries such as Cython to improve efficiency of key areas in the algorithm which are most time consuming.
 
 
 ### 3.5 Scalability
-We have put a large effort to make `inucs` scalable as much as possible. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, `inucs` can process more than 3.2 billion human chromosome interactions (over 261 GB file size), while running a regular PC as long as it has 40 GB of RAM or more. (It took about 16 hours to complete in our testing.) 
+We have put a large effort to make `inucs` scalable as much as possible. In its correct state, `inucs` can handle large amounts of input data without requiring exceeding computational resources. For example, in our testing, `inucs` could process more than 3.2 billion human chromosome interactions (over 261 GB file size), while running a MacBook Pro laptop with 64 GB of RAM in 3 hours. (Please see below for more information.)
 
 Scalability in `inucs` is achieved primarily by breaking down the data into smaller pieces in different stages of running the program. Therefore, at any given time, there is only some manageable chunk of data in memory, and the intermediary results are constantly written on storage space and read back in as needed.
 
@@ -484,45 +489,42 @@ The interaction pairs input file is very large and currently we start with break
 
 ### 3.4 Runtime Measurements
 
-As mentioned, currently we have not taken advantage of multiprocessing yet for the program. Thus, our runtime measurements are using a single CPU core on both the PC and HPC server examples below.
+To measure the performance of `inucs`, we have tested it on the following two datasets using a macOS system:
+
+> MacPro Book laptop:
+>
+> - 2.4 GHz 8-Core Intel Core i9 (or 16 cores with hyperthreading)
+> - 64 GB RAM
 
 #### Example 1: *S. cerevisiae* Data
-
-The `inucs` application can process *S. cerevisiae* data on a regular PC. For one example run, we have used a
-
-> Laptop, using one core from a Intel(R) Core(TM) i7-8565U CPU, with 16 GB of RAM, running Windows 10.
 
 The *S. cerevisiae* data used:
 
 * For `<nucs>`, 77,060 nucleosomes
 * For `<interacts>`, 24,163,427 interactions pairs
-* With a resulting nucleosome interaction **matrix size** of **77,060**nucs x **77,060**nucs 
+* With a resulting nucleosome interaction **matrix size** of **77,060** nucs x **77,060** nucs 
 
-The `prepare` commands, takes less than ***4 minutes*** to complete for this example. 
+The `prepare` commands, using 6 cores with hyperthreading (or 3 physical cores), took ***43 seconds*** to complete for this example.
 
-The time for `plot` is less than *15 seconds*.
+The time for `plot` is less than *5 seconds*.
 
 #### Example 2: Human Data
-
-The application takes much longer to process human data as expected. For this example run, we have used an
-
-> HPC server, using one core from an AMD EPYC 7552 CPU, with 40 GB of RAM, running CentOS Linux 7.6.
 
 The human data used:
 
 * For `<nucs>`, 13,811,032 nucleosomes
 * For `<interacts>`, 3,220,503,431 interactions pairs
-* With a resulting nucleosome interaction **matrix size** of **13,811,032**nucs x **13,811,032**nucs
+* With a resulting nucleosome interaction **matrix size** of **13,811,032** nucs x **13,811,032** nucs
 
-The `prepare` commands, takes about ***980 minutes*** (or less than 17 hours) to complete for this example. One important note here is that most of the time is spent to break down the large input file into smaller manageable files, each of which contain data only for one chromosome and one orientation (i.e., --, ++, -+, or +-). More specifically, it takes about 700 minutes (less that 12 hours) to break down the file, and the remaining 280 minutes (less that 5  hours) to complete the interaction matrix calculations.
+The `prepare` commands, using 6 cores with hyperthreading (or 3 physical cores), took just less than ***3 hours*** to complete for this example.
 
-The time for `plot` is about than *3.5 minutes*.
+The time for `plot` took just under *3 minutes*.
 
 #### Summary of Examples
 
 |                    | *S. cerevisiae* | Human                    |
 | ------------------ | ----------------- | ------------------------ |
-| Computer           | Laptop, 1 core, 16 GB RAM | Server, 1 core, 40 GB RAM        |
+| Num of *Cores* used<br/>(on a MacPro Book:<br/>Intel Core i9 with 64 GB RAM) | 6 hyperthreaded cores<br/>(or 3 physical cores) | 12 hyperthreaded cores<br/>(or 6 physical cores) |
 | Nucleosomes        | 77,060            | 13,811,032               |
 | Interactions pairs | 24,163,427        | 3,220,503,431            |
 | Nucleosome interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
