@@ -16,7 +16,6 @@ import multiprocessing
 import os
 import platform
 import pprint
-import queue
 import re
 import shutil
 import subprocess
@@ -770,33 +769,27 @@ class InterasFileSplitter:
         reader_process.join()
         writer_process.join()
 
-        try:
-            while True:
-                buffer_name = q1_read.get_nowait()  # throws exception if empty
-                shm = SharedMemory(create=False, name=buffer_name)
-                shm.unlink()
-        except queue.Empty:  # if q1_read is empty
-            pass
+        cls.Buffer.release_all_buffers()
 
     @classmethod
     def _worker1_read_input_file(cls, interas_file, n_splitter_processes, q1_read, q2_split):
 
         n_buffers = round(n_splitter_processes * 1.3)  # more buffers than workers to help prevent worker waiting time
         for _ in range(n_buffers):
-            buffer_name = cls.Buffer.create_shared_memory().name
+            buffer_name = cls.Buffer.new_buffer_name()
             q1_read.put(buffer_name)  # put the new buffer into empty queue
 
         buffer = cls.Buffer()
         with io.FileIO(interas_file, 'rb') as in_f:  # FileIO supports "readinto" predefined buffer space
             cls.__skip_leading_comment_lines(in_f)
             for i in itertools.count():  # infinite loop with counter
-                shared_memory_name = q1_read.get(block=True)
-                buffer.set_shared_memory(shared_memory_name)
-                if 0 == buffer.read_into_buf_from(in_f, i):  # stop if the returned num of bytes read is zero
-                    q1_read.put(buffer.name)  # put back buffer to free up its shared_memory later
-                    q2_split.put(cls.__DONE)  # signal split workers to finish
-                    break
-                q2_split.put(buffer.name)
+                buffer_name = q1_read.get(block=True)
+                with buffer.reset(buffer_name):
+                    if 0 == buffer.read_into_buf_from(in_f, i):  # stop if the returned num of bytes read is zero
+                        q1_read.put(buffer.name)  # put back buffer to free up its shared_memory later
+                        q2_split.put(cls.__DONE)  # signal split workers to finish
+                        break
+                    q2_split.put(buffer.name)
 
     @classmethod
     def __skip_leading_comment_lines(cls, interas_file_handle, comment=S.COMMENT_CHAR):
@@ -829,11 +822,12 @@ class InterasFileSplitter:
                 q3_write.put(cls.__DONE)  # also signal writer worker to finish
                 break
 
-            buffer.set_shared_memory(buffer_name)
-
-            with io.BytesIO(buffer.buf[0:buffer.length]) as buf:  # low_memory=False below is set to suppress a warning
-                df = pd.read_csv(buf, usecols=used_cols.keys(), sep=S.FIELD_SEPARATOR, header=None, low_memory=False)
-            q1_read.put(buffer.name)  # now buffer can be reused by the reader worker
+            with buffer.reset(buffer_name):
+                with io.BytesIO(buffer.buf[0:buffer.length]) as buf:
+                    df = pd.read_csv(  # low_memory=False is set to suppress a warning
+                        buf, usecols=used_cols.keys(), sep=S.FIELD_SEPARATOR, header=None, low_memory=False)
+                buffer_id = buffer.id
+                q1_read.put(buffer.name)  # now buffer can be reused by the reader worker
 
             df[[chrom1, chrom2]] = df[[chrom1, chrom2]].astype(chroms_categorical)  # for faster filtering and comparing
             df = df.dropna()  # drops any rows not containing chroms stated in chroms_categorical
@@ -843,7 +837,7 @@ class InterasFileSplitter:
                 outfile = outfiles.get(chrom_and_strands)  # e.g., {(chrII, +, -): 'path/to/outfile'}
                 if outfile is None:
                     continue
-                chunk_file = outfile.parent / f'{outfile.name}-{buffer.id}-{os.getpid()}'
+                chunk_file = outfile.parent / f'{outfile.name}-{buffer_id}-{os.getpid()}'
                 chunk_df = chunk_df.iloc[:, :len(S.LOCATION_COLS)]  # keeping: ch1 pos1 ch2 pos2,  dropping the strands
                 chunk_df.to_csv(chunk_file, sep=S.FIELD_SEPARATOR, index=False, header=False)
                 output_chunks.update({outfile: chunk_file})
@@ -905,14 +899,53 @@ class InterasFileSplitter:
                     pass
 
     class Buffer:
+        """Must be used within a "with" statement"""
+
         BYTES_FOR_ID = 3  # Number of bytes reserved at the end of buffer to hold the id for each buffer content
         BYTES_FOR_LENGTH = 5  # Number of bytes reserved at the end of buffer to hold the length of the buffer content
         SIZE_IN_MEGA_BYTES = 10  # Estimated size of buffer in bytes. E.g. 100MB fits ~ 1 million lines, each 100 chars
 
-        def __init__(self, create=False):
+        __buffer_names = []
+        __should_unregister_shared_memory = 'Linux' == platform.system()
+
+        def __init__(self):
             self.__shared_memory = None
-            if create:
-                self.set_shared_memory(self.create_shared_memory().name)
+            self.__buffer_name = None  # a name for shared_memory waiting to be assigned in next __enter__ call
+
+        @classmethod
+        def __get_shared_memory(cls, shared_memory_name: str = None):
+            if shared_memory_name:
+                shm = SharedMemory(create=False, name=shared_memory_name)
+            else:
+                shm = SharedMemory(create=True, size=cls.SIZE_IN_MEGA_BYTES * 1_000_000)
+                cls.__buffer_names.append(shm.name)
+
+            return shm
+
+        @classmethod
+        def new_buffer_name(cls):
+            """creates shared_memory and returns its name"""
+            return cls.__get_shared_memory().name
+
+        def reset(self, buffer_name: str):
+            """Must to be used with a "with" statement: e.g. "with buffer.reset('buf_name'):" """
+            self.__buffer_name = buffer_name  # __buffer_name only needed to enforce use of "with" statement
+            return self
+
+        def __enter__(self):  # enter the context for with statement
+            """find and reconnect to a previously created shared memory, using buffer_name previously set by reset()"""
+            self.__shared_memory = self.__get_shared_memory(self.__buffer_name)
+
+        def __exit__(self, exc_type, exc_val, exc_tb):  # exit the context for with statement
+            if self.__should_unregister_shared_memory:  # depends on platform
+                multiprocessing.resource_tracker.unregister(self.name, 'shared_memory')
+            self.__shared_memory = None
+
+        @classmethod
+        def release_all_buffers(cls):
+            for buffer_name in cls.__buffer_names:
+                shm = cls.__get_shared_memory(buffer_name)
+                shm.unlink()
 
         def read_into_buf_from(self, infile: io.RawIOBase, content_id: int = 0) -> int:
             n_bytes_read = infile.readinto(self.buf)  # overwrites id and length variables, so they must to be set later
@@ -936,14 +969,6 @@ class InterasFileSplitter:
 
             self.__set_length(length)
             return length
-
-        @classmethod
-        def create_shared_memory(cls):
-            return SharedMemory(create=True, size=cls.SIZE_IN_MEGA_BYTES * 1_000_000)
-
-        def set_shared_memory(self, name):
-            """find and reconnect to a previously created shared memory, using name"""
-            self.__shared_memory = SharedMemory(create=False, name=name)
 
         @property
         def buf(self):
@@ -1843,7 +1868,7 @@ class CLI:
                 LOGGER.error(e)
                 LOGGER.info(f'You can safely remove cache folder manually: {cache_dir}')
 
-        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}")
+        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}\n")
 
     @classmethod
     def handler_plot_command_testing(cls, command, working_dir, chrom, start_region, end_region, prefix, save_only):
@@ -1894,7 +1919,7 @@ class CLI:
             LOGGER.warning('\n\nNOTE: No plots have been produced because no data is available. '
                            'You many want to consider expanding the chromosome region of study.')
 
-        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}")
+        LOGGER.info(f"\n _ _ _ _ _ Finished command {command} in {Files.time_diff(start)}\n")
 
     @classmethod
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_file: Path, save_only):
