@@ -755,13 +755,13 @@ class InterasFileSplitter:
         reader_process.start()
 
         args = (q3_write, n_splitter_processes)
-        writer_process = multiprocessing.Process(target=cls._worker3_merge_splitted_files, args=args)
+        writer_process = multiprocessing.Process(target=cls._worker3_merge_split_files, args=args)
         writer_process.start()
 
         subdir_inter = next(iter(outfiles.values())).parent  # in process: no access to FILES.get_subdir(Files.S_INTER)
         # n_splitter_processes = min(n_splitter_processes, len(outfiles))  # not needed here; more processes are better
         args = [(outfiles, chroms_list, used_cols, q1_read, q2_split, q3_write)] * n_splitter_processes
-        LOGGER.info(f'In total, creating {len(outfiles)} splitted files using {FILES.n_processes} parallel processes:'
+        LOGGER.info(f'In total, creating {len(outfiles)} split files using {FILES.n_processes} parallel processes:'
                     f'\n\t{subdir_inter}\nThis may take a while. Please wait')
         with(multiprocessing.Pool(n_splitter_processes)) as splitter_pool:
             splitter_pool.starmap(cls._worker2_split_input, args)
@@ -845,7 +845,7 @@ class InterasFileSplitter:
             q3_write.put(output_chunks)
 
     @classmethod
-    def _worker3_merge_splitted_files(cls, q3_write, n_splitter_processes):
+    def _worker3_merge_split_files(cls, q3_write, n_splitter_processes):
 
         n_finished_split_processes = 0
         while True:
@@ -857,7 +857,6 @@ class InterasFileSplitter:
                 else:
                     break
 
-            # todo efficiency: files should be saved in large chunks (e.g., 100 MB) here to make the next steps simpler
             for outfile, chunk_file in output_chunks.items():
                 with open(outfile, 'ab', buffering=10_000_000) as fd_write:  # open for append
                     with open(chunk_file, 'rb') as fd_read:
@@ -868,7 +867,7 @@ class InterasFileSplitter:
                         pass
 
     @classmethod
-    def __worker3_write_splitted_strings(cls, q3_write, n_splitter_processes):
+    def __worker3_write_split_strings(cls, q3_write, n_splitter_processes):
 
         n_finished_split_processes = 0
         while True:
@@ -938,7 +937,9 @@ class InterasFileSplitter:
 
         def __exit__(self, exc_type, exc_val, exc_tb):  # exit the context for with statement
             if self.__should_unregister_shared_memory:  # depends on platform
-                multiprocessing.resource_tracker.unregister(self.name, 'shared_memory')
+                # unregistering shared memory is very slow, and is used here as a workaround for python bug:
+                # https://bugs.python.org/issue38119
+                multiprocessing.resource_tracker.unregister(self.__shared_memory._name, 'shared_memory')
             self.__shared_memory = None
 
         @classmethod
