@@ -823,7 +823,7 @@ class InterasFileSplitter:
                 break
 
             with buffer.reset(buffer_name):
-                with io.BytesIO(buffer.buf[0:buffer.length]) as buf:
+                with io.BytesIO(buffer.buf) as buf:
                     df = pd.read_csv(  # low_memory=False is set to suppress a warning
                         buf, usecols=used_cols.keys(), sep=S.FIELD_SEPARATOR, header=None, low_memory=False)
                 buffer_id = buffer.id
@@ -837,7 +837,7 @@ class InterasFileSplitter:
                 outfile = outfiles.get(chrom_and_strands)  # e.g., {(chrII, +, -): 'path/to/outfile'}
                 if outfile is None:
                     continue
-                chunk_file = outfile.parent / f'{outfile.name}-{buffer_id}-{os.getpid()}'
+                chunk_file = outfile.parent / f'{outfile.name}-chunk{buffer_id}-pid{os.getpid()}'
                 chunk_df = chunk_df.iloc[:, :len(S.LOCATION_COLS)]  # keeping: ch1 pos1 ch2 pos2,  dropping the strands
                 chunk_df.to_csv(chunk_file, sep=S.FIELD_SEPARATOR, index=False, header=False)
                 output_chunks.update({outfile: chunk_file})
@@ -949,7 +949,8 @@ class InterasFileSplitter:
                 shm.unlink()
 
         def read_into_buf_from(self, infile: io.RawIOBase, content_id: int = 0) -> int:
-            n_bytes_read = infile.readinto(self.buf)  # overwrites id and length variables, so they must to be set later
+            shm_buf = self.__shared_memory.buf
+            n_bytes_read = infile.readinto(shm_buf)  # overwrites id and length variables, so they must to be set later
 
             self.set_id(content_id)  # MUST be after reading in data, otherwise gets overwritten
 
@@ -961,7 +962,7 @@ class InterasFileSplitter:
             length = self.max_length
             lf, cr = ord('\n'), ord('\r')  # Unix: \n,  Windows \r\n,  Classic Mac \r
             for i in range(length - 1, 0, -1):  # reverse search for \n or \r
-                if self.buf[i] == lf or self.buf[i] == cr:  # checks for \n first because searching in reverse direction
+                if shm_buf[i] == lf or shm_buf[i] == cr:  # checks for \n first because searching in reverse direction
                     length = i + 1
                     break
 
@@ -973,7 +974,7 @@ class InterasFileSplitter:
 
         @property
         def buf(self):
-            return self.__shared_memory.buf
+            return self.__shared_memory.buf[0:self.length]
 
         @property
         def name(self) -> str:
