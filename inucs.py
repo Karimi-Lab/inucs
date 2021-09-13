@@ -743,14 +743,16 @@ class InterasFileSplitter:
     __DONE = 'DONE!'
 
     @classmethod
-    def split_interas_file(cls, outfiles: dict, interas_file, chroms_list, used_cols):
+    def split_interas_file(cls, outfiles: dict, interas_file, chroms_list):
         manager = multiprocessing.Manager()
         q1_read = manager.Queue()
         q2_split = manager.Queue()
         q3_write = manager.Queue()
 
+        header_line_num, used_cols = NucInteras.validate_interas_file(interas_file)
+
         n_splitter_processes = FILES.n_processes - 2  # two processes are used for reading from and writing to files
-        args = (interas_file, n_splitter_processes, q1_read, q2_split)
+        args = (interas_file, header_line_num, n_splitter_processes, q1_read, q2_split)
         reader_process = multiprocessing.Process(target=cls._worker1_read_input_file, args=args)
         reader_process.start()
 
@@ -760,7 +762,7 @@ class InterasFileSplitter:
 
         subdir_inter = next(iter(outfiles.values())).parent  # in process: no access to FILES.get_subdir(Files.S_INTER)
         # n_splitter_processes = min(n_splitter_processes, len(outfiles))  # not needed here; more processes are better
-        args = [(outfiles, chroms_list, used_cols, q1_read, q2_split, q3_write)] * n_splitter_processes
+        args = [(outfiles, chroms_list, used_cols.to_dict(), q1_read, q2_split, q3_write)] * n_splitter_processes
         LOGGER.info(f'In total, creating {len(outfiles)} split files using {FILES.n_processes} parallel processes:'
                     f'\n\t{subdir_inter}\nThis may take a while. Please wait')
         with(multiprocessing.Pool(n_splitter_processes)) as splitter_pool:
@@ -772,7 +774,7 @@ class InterasFileSplitter:
         cls.Buffer.release_all_buffers()
 
     @classmethod
-    def _worker1_read_input_file(cls, interas_file, n_splitter_processes, q1_read, q2_split):
+    def _worker1_read_input_file(cls, interas_file, header_line_num, n_splitter_processes, q1_read, q2_split):
 
         n_buffers = round(n_splitter_processes * 1.3)  # more buffers than workers to help prevent worker waiting time
         for _ in range(n_buffers):
@@ -781,7 +783,7 @@ class InterasFileSplitter:
 
         buffer = cls.Buffer()
         with io.FileIO(interas_file, 'rb') as in_f:  # FileIO supports "readinto" predefined buffer space
-            cls.__skip_leading_comment_lines(in_f)
+            cls.__skip_comments_and_header_line(in_f, header_line_num)
             for i in itertools.count():  # infinite loop with counter
                 buffer_name = q1_read.get(block=True)
                 with buffer.reset(buffer_name):
@@ -792,7 +794,7 @@ class InterasFileSplitter:
                     q2_split.put(buffer.name)
 
     @classmethod
-    def __skip_leading_comment_lines(cls, interas_file_handle, comment=S.COMMENT_CHAR):
+    def __skip_comments_and_header_line(cls, interas_file_handle, header_line_num, comment=S.COMMENT_CHAR):
         """Skips the leading comment lines, assuming no other comment lines occur later in the file"""
         comment = bytearray(comment, 'utf-8')
         last_pos = interas_file_handle.tell()
@@ -802,7 +804,8 @@ class InterasFileSplitter:
                 last_pos = interas_file_handle.tell()
                 line = interas_file_handle.readline()
             else:
-                interas_file_handle.seek(last_pos)  # put back the last line which is the first non-comment line
+                if header_line_num is None:  # so no_header_line_exists
+                    interas_file_handle.seek(last_pos)  # put back the last line which is the first non-comment line
                 break
 
     @classmethod
@@ -1050,7 +1053,13 @@ class NucInteras:
                 LOGGER.info('\nSplitting interaction file based on chrom and orientation')
 
             start = timer()
-            self.__split_interas_file__multiprocessing()
+            if 'Windows' == platform.system():
+                if verbose:
+                    LOGGER.info('NOTE: Due to a bug in Python for Windows (https://bugs.python.org/issue38119), '
+                                'the splitting step here is much slower in Windows than in macOS or Linux.')
+                self.__split_interas_file__single_process()
+            else:
+                self.__split_interas_file__multiprocessing()
 
             if verbose:
                 LOGGER.info(f'Done! Splitting task finished in {Files.time_diff(start)}')
@@ -1283,21 +1292,25 @@ class NucInteras:
             LOGGER.info('No interaction cache files were updated')
             return
 
-        _, used_cols = self.__validate_interas_file(self.__interas_file)
-
-        InterasFileSplitter.split_interas_file(outfiles, self.__interas_file, self.__chrom_list, used_cols.to_dict())
+        InterasFileSplitter.split_interas_file(outfiles, self.__interas_file, self.__chrom_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
-    def __split_interas_file__single_processor(self):
-        # This is slow! Use __split_interas_file__multiprocessing() instead.
+    def __split_interas_file__single_process(self):
+        # This is slow! Recommended to use __split_interas_file__multiprocessing() when possible.
 
         # decide if need to continue
-        if FILES.get_files_needing_refresh(Files.S_INTER).empty:
-            LOGGER.info('\nNo interaction cache files were updated')
+        outfile_names = FILES.get_files_needing_refresh__dict(Files.S_INTER)
+        if not outfile_names:
+            LOGGER.info('No interaction cache files were updated')
             return
 
-        header_line_num, used_cols = self.__validate_interas_file(self.__interas_file)
+        chroms_categorical = pd.CategoricalDtype(categories=self.__chrom_list)
+
+        header_line_num, used_cols = self.validate_interas_file(self.__interas_file)
+
+        chrom1, chrom2 = S.CHROM_COLS.values  # ['chrom1', 'chrom2']
+        strand1, strand2 = S.STRAND_COLS.values  # ['strand1', 'strand2']
 
         try:
             chunks = pd.read_csv(self.__interas_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
@@ -1305,64 +1318,58 @@ class NucInteras:
         except pd.errors.ParserError as parser_error:
             raise InputFileError(self.__interas_file) from parser_error
 
-        groupby_cols = [S.CHROM_COLS.iloc[0]] + S.STRAND_COLS.to_list()  # ['chrom1', 'strand1', 'strand2']
-        output_files = {}
+        open_files = {}
         with contextlib.ExitStack() as cm:  # allows to open an unknown number of files
             for df_chunk in chunks:
                 df_chunk.columns = S.USED_COLS
-                df_chunk = df_chunk.query('=='.join(S.CHROM_COLS))  # rows where chrom1==chrom2
-                df_chunk = df_chunk.query(  # todo efficiency: this approach is slow if all chrom_list are acceptable
-                    f'{S.CHROM_COLS.iloc[0]} in {self.__chrom_list}')  # rows with listed chrom
-                groups = df_chunk.groupby(groupby_cols)
-                for chrom_and_orientation, df in groups:
-                    chrom = chrom_and_orientation[0]  # e.g., 'chrom21'
-                    orientation = chrom_and_orientation[1:]  # e.g., ('+', '-')
-                    file = output_files.get(chrom_and_orientation)
-                    if file is None:
-                        working_file = FILES.get_working_files(chrom, orientation, Files.S_INTER).squeeze()
-                        if working_file.empty or not working_file.needs_refresh:
-                            continue
-                        file = working_file.file_zip if FILES.zipped else working_file.file
-                        file = working_file.subdir / file
-                        opener = gzip.open if FILES.zipped else open
-                        file = cm.enter_context(opener(file, 'wt'))
-                        output_files[chrom_and_orientation] = file
+                df_chunk[[chrom1, chrom2]] = df_chunk[[chrom1, chrom2]].astype(chroms_categorical)  # for fast filtering
+                df_chunk = df_chunk.dropna()  # drops any rows not containing chroms stated in chroms_categorical
+                df_chunk = df_chunk[df_chunk[chrom1] == df_chunk[chrom2]]  # fast row filtering when used with cat cols
 
-                    # Here header=False because the code for bash is not writing out header (yet)
-                    df.to_csv(file, sep=S.FIELD_SEPARATOR, index=False, header=False)
+                groups = df_chunk.groupby([chrom1, strand1, strand2])
+                for chrom_and_strands, df in groups:
+                    outfile_handler = open_files.get(chrom_and_strands)
+                    if outfile_handler is None:
+                        outfile_name = outfile_names.get(chrom_and_strands)  # e.g., {(chrII, +, -): 'path/to/outfile'}
+                        if outfile_name is None:
+                            continue
+                        opener = gzip.open if Files.is_file_zipped(outfile_name) else open
+                        outfile_handler = cm.enter_context(opener(outfile_name, 'wt'))
+                        open_files[chrom_and_strands] = outfile_handler
+
+                    df = df.iloc[:, :len(S.LOCATION_COLS)]  # keeping: ch1 pos1 ch2 pos2,  dropping the strands
+                    df.to_csv(outfile_handler, sep=S.FIELD_SEPARATOR, index=False, header=False)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
     @classmethod
-    def __validate_interas_file(cls, interas_file, num_lines_to_check=1000):
-        # check the header names if there are any in the interas_file
-        df = pd.read_csv(interas_file, sep='\n', nrows=num_lines_to_check, names=['line'])
-        comment_lines = df[df['line'].str.startswith(S.COMMENT_CHAR)]
-        data_is_in_pairs_format = False
-        if not comment_lines.empty:
-            header_line = comment_lines.iloc[-1, 0]  # last line starting with '#'
-            if header_line.startswith(S.HEADER_LINE_BEGINNING):
-                data_is_in_pairs_format = True
-                file_header_names = header_line.lstrip(S.HEADER_LINE_BEGINNING).split()
-                if file_header_names[1:(1 + len(S.USED_COLS))] != S.USED_COLS.to_list():  # ignoring any extra columns
-                    raise RuntimeError(f'Invalid input file format: {interas_file}')
+    def validate_interas_file(cls, interas_file, num_lines_to_check=1000):
 
-        header_line_num = None if data_is_in_pairs_format else 0  # Use 0 for header on 1st line and None for no header
+        # skip the comment lines at the beginning of the file
+        with open(interas_file, 'r') as in_f:
+            for line_num, line in enumerate(in_f):
+                if not line.startswith(S.COMMENT_CHAR):
+                    break
+
+        used_cols = S.USED_COLS.copy()
+        line = pd.Series(line.strip().split(S.FIELD_SEPARATOR))  # convert line to series for easier comparison for cols
+        if line.size < used_cols.size:
+            raise RuntimeError(f'Not enough number of columns in: {interas_file}')
+
+        found_header = line[used_cols.index].equals(used_cols)
+        if not found_header and line.size > used_cols.size:
+            used_cols.index += 1  # shift index to check if there is one extra column at the beginning
+            found_header = line[used_cols.index].equals(used_cols)
+
+        header_line_num = 0 if found_header else None  # Use 0 for header on 1st non-comment line and None for no header
+
         try:
             df = pd.read_csv(interas_file, sep=S.FIELD_SEPARATOR, comment=S.COMMENT_CHAR,
                              nrows=num_lines_to_check, header=header_line_num)
         except pd.errors.ParserError as parser_error:
             raise InputFileError(interas_file) from parser_error
 
-        used_cols = S.USED_COLS.copy()
-        if df.columns.size < used_cols.size:
-            raise RuntimeError(f'Not enough number of columns in: {interas_file}')
-
-        # todo this test is not enough to shift the index (also can't delete validate method as it decides on used_cols)
-        if df.columns.size > used_cols.size:
-            used_cols.index += 1  # there is one extra column at the beginning
-
-        df = df.rename(used_cols, axis=1)  # this will have no effect if not data_is_in_pairs_format
+        df = df.rename(used_cols, axis=1)  # this will only have an effect if headers are numbers
         df = df[used_cols]  # ensures used_cols exist with no extra cols
 
         # if used_cols.to_list() == df.iloc[0, :].to_list():  # remove the first row if it was a header row
