@@ -521,7 +521,7 @@ The time for `plot` took just under *3 minutes*.
 
 #### Summary of Examples
 
-|                    | Ex1: *S. cerevisiae* | Ex1: *S. cerevisiae* | Ex2: Human            | Ex2: Human         |
+|                    | Example 1:<br /> *S. cerevisiae* | Example 1:<br /> *S. cerevisiae* | Example 2:<br /> Human | Example 2:<br /> Human |
 | ------------------ | ----------------- | ------------------------ | ------------------------ | ------------------------ |
 | Hardware (details above) | Win, 16GB | Mac, 64GB | Mac, 64GB | Linux, 500GB |
 | *Cores* used (hyperthreaded) | 6 cores | 6 cores | 12 cores | 100 cores |
