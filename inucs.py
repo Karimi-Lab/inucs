@@ -2025,11 +2025,11 @@ class CLI:
             title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
             **figure_args)
         set_fig_attr(p_overlaid)
-        p_overlaid.height -= 30
+        # p_overlaid.height -= 30  # crashes in Windows because height is None
 
         p_overlaid_norm = figure(title="Normalized interaction counts", **figure_args)
         set_fig_attr(p_overlaid_norm)
-        p_overlaid_norm.height -= 30
+        # p_overlaid_norm.height -= 30  # crashes in Windows because height is None
 
         lyt = layout([[p_overlaid, p_overlaid_norm]])
 
@@ -2053,11 +2053,12 @@ class CLI:
             p.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p.add_tools(SaveTool())
 
-            color_bar_mapper = LinearColorMapper(  # adjust low and high linearly
-                palette=palettes[orient], low=np.sinh(min_arcsinh_counts), high=np.sinh(max_arcsinh_counts))
-            color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10, height=20)
-            p.height += color_bar.label_standoff + color_bar.height
-            p.add_layout(color_bar, 'below')
+            if platform.system() != 'Windows':  # hide ColorBar in Windows due to display bug
+                color_bar_mapper = LinearColorMapper(  # adjust low and high linearly
+                    palette=palettes[orient], low=np.sinh(min_arcsinh_counts), high=np.sinh(max_arcsinh_counts))
+                color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10, height=20)
+                p.height += color_bar.label_standoff + color_bar.height
+                p.add_layout(color_bar, 'below')
 
             set_fig_attr(p)
 
@@ -2071,9 +2072,10 @@ class CLI:
             p_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
             p_norm.add_tools(SaveTool())
 
-            color_bar = ColorBar(color_mapper=mapper_norm, label_standoff=10, height=20)
-            p_norm.height += color_bar.label_standoff + color_bar.height
-            p_norm.add_layout(color_bar, 'below')
+            if platform.system() != 'Windows':  # hide ColorBar in Windows due to display bug
+                color_bar = ColorBar(color_mapper=mapper_norm, label_standoff=10, height=20)
+                p_norm.height += color_bar.label_standoff + color_bar.height
+                p_norm.add_layout(color_bar, 'below')
 
             set_fig_attr(p_norm)
 
