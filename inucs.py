@@ -80,6 +80,8 @@ class InputFileError(SyntaxError):
         self.filename = filename
 
 
+# todo make Files a service so that multiple processes can interact with it
+# todo re-write methods to better handle zip/unzip, fullpath/relative-path, exist/non-exist, ... cases
 class Files:
     S_INTER = 'state_inter'
     S_NUC_INTER = 'state_nuc_inter'
@@ -186,13 +188,6 @@ class Files:
                 f'WARNING: No matrices folder or files found {matrix_subdir}\n'
                 f'Please consider refreshing your working directory using "prepare --refresh"'
             )
-
-    def iter_working_files(self):
-        df = self.__working_files.copy()
-        important_cols = self.__IMP_COLS.drop(['needs_refresh', 'subdir'])
-        df = df[important_cols]  # dropping cols that depend on state or are unspecified
-        for _, file_info in df.iterrows():
-            yield file_info
 
     @property
     def working_dir(self):
@@ -763,8 +758,8 @@ class InterasFileSplitter:
         subdir_inter = next(iter(outfiles.values())).parent  # in process: no access to FILES.get_subdir(Files.S_INTER)
         # n_splitter_processes = min(n_splitter_processes, len(outfiles))  # not needed here; more processes are better
         args = [(outfiles, chroms_list, used_cols.to_dict(), q1_read, q2_split, q3_write)] * n_splitter_processes
-        LOGGER.info(f'In total, creating {len(outfiles)} split files using {FILES.n_processes} parallel processes:'
-                    f'\n\t{subdir_inter}\nThis may take a while. Please wait')
+        LOGGER.info(f'In total, creating at most {len(outfiles)} split files using {FILES.n_processes} '
+                    f'parallel processes:\n\t{subdir_inter}\nThis may take a while. Please wait')
         with(multiprocessing.Pool(n_splitter_processes)) as splitter_pool:
             splitter_pool.starmap(cls._worker2_split_input, args)
 
@@ -1203,7 +1198,7 @@ class NucInteras:
             if not input_file.exists():
                 input_file = subdir_inter / file_info.file_zip  # check if the zip version exists
                 if not input_file.exists():
-                    LOGGER.warning(f'Skipping cache file. File not found: {file_info.file}')
+                    # LOGGER.warning(f'Skipping cache file. File not found: {file_info.file}')
                     continue
             output_file = file_info.file_zip if FILES.zipped else file_info.file
             output_file = subdir_nuc_inter / output_file
@@ -1211,11 +1206,12 @@ class NucInteras:
             to_do_list.append((output_file, input_file, indexed_nucs_file, file_info.chrom, FILES.keep_cache))
             # LOGGER.info(f'Queued: creating nuc interaction file: {output_file}')
 
-        n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} nuc interaction files using {n_processes} '
-                    f'parallel processes:\n\t{subdir_nuc_inter}\nThis may take a while. Please wait')
-        with multiprocessing.Pool(n_processes) as pool:
-            pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
+        if len(to_do_list) > 0:
+            n_processes = min(FILES.n_processes, len(to_do_list))
+            LOGGER.info(f'In total, creating {len(to_do_list)} nuc interaction files using {n_processes} '
+                        f'parallel processes:\n\t{subdir_nuc_inter}\nThis may take a while. Please wait')
+            with multiprocessing.Pool(n_processes) as pool:
+                pool.starmap(self._convert_interas_to_nuc_interas, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_NUC_INTER)
 
@@ -1294,6 +1290,8 @@ class NucInteras:
 
         InterasFileSplitter.split_interas_file(outfiles, self.__interas_file, self.__chrom_list)
 
+        self.__warn_for_missing_interas_files()
+
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
 
     def __split_interas_file__single_process(self):
@@ -1340,7 +1338,38 @@ class NucInteras:
                     df = df.iloc[:, :len(S.LOCATION_COLS)]  # keeping: ch1 pos1 ch2 pos2,  dropping the strands
                     df.to_csv(outfile_handler, sep=S.FIELD_SEPARATOR, index=False, header=False)
 
+        self.__warn_for_missing_interas_files()
         FILES.set_needs_refresh_for_all_files(False, Files.S_INTER)
+
+    @staticmethod
+    def __warn_for_missing_interas_files():
+        # if any files still need refresh, it means they have not been created, so no interactions existed for them
+        outfiles = FILES.get_working_files(state=Files.S_INTER)
+        if outfiles.empty:
+            return  # no files expected!
+
+        chroms_with_all_strands_missing = []
+        chroms_with_some_strands_missing = []
+        missing_files = outfiles[~ ((outfiles.subdir / outfiles.file).apply(Path.exists) |
+                                    (outfiles.subdir / outfiles.file_zip).apply(Path.exists))].copy()
+        if len(missing_files) == 0:
+            return  # no more actions necessary as no files are missing
+        missing_files['strand1'], missing_files['strand2'] = zip(*missing_files['strands'])  # split tuple into two cols
+        missing_files = missing_files[['chrom', 'strand1', 'strand2']]  # ignore other columns
+        for chrom, strands in missing_files.groupby(['chrom'], as_index=False):
+            if len(strands) < 4:
+                chroms_with_some_strands_missing.append(strands)
+            else:
+                chroms_with_all_strands_missing.append(chrom)
+
+        if len(chroms_with_all_strands_missing) > 0 or len(chroms_with_some_strands_missing) > 0:
+            LOGGER.warning('NOTE:')
+            if len(chroms_with_all_strands_missing) > 0:
+                LOGGER.warning('No interactions have been found for the following chromosome(s) (with any strands):')
+                LOGGER.warning(', '.join(chroms_with_all_strands_missing))
+            if len(chroms_with_some_strands_missing) > 0:
+                LOGGER.warning('No interactions have been found for the following chromosome(s) and strands:')
+                LOGGER.warning(pd.concat(chroms_with_some_strands_missing).sort_index().to_string())
 
     @classmethod
     def validate_interas_file(cls, interas_file, num_lines_to_check=1000):
@@ -1371,9 +1400,6 @@ class NucInteras:
 
         df = df.rename(used_cols, axis=1)  # this will only have an effect if headers are numbers
         df = df[used_cols]  # ensures used_cols exist with no extra cols
-
-        # if used_cols.to_list() == df.iloc[0, :].to_list():  # remove the first row if it was a header row
-        #     df = df.iloc[1:, :].reset_index(drop=True)
 
         checks = {'strand1': ['+', '-'], 'strand2': ['+', '-']}  # it could also check for chrom_list in the future
         dtypes = {S.CHROM_COLS.iloc[0]: np.dtype('O'), S.POS_COLS.iloc[0]: np.dtype('int64'),
@@ -1426,8 +1452,8 @@ class NucInteraMatrix:
         refreshed_files = self.__create_nuc_intera_matrix_files__multiprocessing(keep_nucs_cols)
 
         if verbose:
-            if refreshed_files == 0:
-                LOGGER.info('No Nuc Interaction Matrix files were updated')
+            # if refreshed_files == 0:
+            #     LOGGER.info('No Nuc Interaction Matrix files were updated')
             LOGGER.info(f'Done! Preparing Nuc Interaction Matrices finished in {Files.time_diff(start)}')
 
             LOGGER.info(f'\nNucleosome interaction matrices ready with total size: '
@@ -1660,16 +1686,19 @@ class NucInteraMatrix:
             output_file = file_info.subdir / output_file
 
             nuc_interas_file = NucInteras.get_nuc_interas_file(file_info.chrom, file_info.orientation)
+            if nuc_interas_file is None:
+                continue
 
             to_do_list.append((output_file, nuc_interas_file, indexed_nucs_file, FILES.norm_distance, FILES.keep_cache))
             # LOGGER.info(f'Queued: creating nuc interaction Matrix file: {output_file}')
 
-        subdir_matrix = FILES.get_subdir(Files.S_MATRIX)
-        n_processes = min(FILES.n_processes, len(to_do_list))
-        LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files using {n_processes} parallel processes:'
-                    f'\n\t{subdir_matrix}\nThis may take a while. Please wait')
-        with multiprocessing.Pool(n_processes) as pool:
-            pool.starmap(self._convert_nuc_interas_to_matrices, to_do_list)
+        if len(to_do_list) > 0:
+            subdir_matrix = FILES.get_subdir(Files.S_MATRIX)
+            n_processes = min(FILES.n_processes, len(to_do_list))
+            LOGGER.info(f'In total, creating {len(to_do_list)} Matrix files using {n_processes} parallel processes:'
+                        f'\n\t{subdir_matrix}\nThis may take a while. Please wait')
+            with multiprocessing.Pool(n_processes) as pool:
+                pool.starmap(self._convert_nuc_interas_to_matrices, to_do_list)
 
         FILES.set_needs_refresh_for_all_files(False, Files.S_MATRIX)
 
