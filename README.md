@@ -489,12 +489,11 @@ The interaction pairs input file is very large and currently we start with break
 
 ### 3.4 Runtime Measurements
 
-To measure the performance of `inucs`, we have tested it on the following two datasets using a macOS system:
+To measure the performance of `inucs`, we have tested it on the following two example datasets, using three different systems:
 
-> MacPro Book laptop:
->
-> - 2.4 GHz 8-Core Intel Core i9 (or 16 cores with hyperthreading)
-> - 64 GB RAM
+- Laptop, HP, Windows, 8 cores (with hyperthreading), 16 GB RAM
+- Laptop, MacBook Pro, 16 cores (with hyperthreading), 64 GB RAM
+- Server, Linux, 100 cores (with hyperthreading), 500 GB RAM
 
 #### Example 1: *S. cerevisiae* Data
 
@@ -522,14 +521,15 @@ The time for `plot` took just under *3 minutes*.
 
 #### Summary of Examples
 
-|                    | *S. cerevisiae* | Human                    |
-| ------------------ | ----------------- | ------------------------ |
-| Num of *Cores* used<br/>(on a MacBook Pro:<br/>Intel Core i9 with 64 GB RAM) | 6 hyperthreaded cores<br/>(or 3 physical cores) | 12 hyperthreaded cores<br/>(or 6 physical cores) |
-| Nucleosomes        | 77,060            | 13,811,032               |
-| Interactions pairs | 24,163,427        | 3,220,503,431            |
-| Nucleosome interactions | 77,060 x 77,060   | 13,811,032 x 13,811,032  |
-| Time to prepare    | 4 minutes         | 3 hours |
-| Time to plot       | 15 seconds        | 3.5 minutes              |
+|                    | Ex1: *S. cerevisiae* | Ex1: *S. cerevisiae* | Ex2: Human            | Ex2: Human         |
+| ------------------ | ----------------- | ------------------------ | ------------------------ | ------------------------ |
+| Hardware (details above) | Win, 16GB | Mac, 64GB | Mac, 64GB | Linux, 500GB |
+| *Cores* used (hyperthreaded) | 6 cores | 6 cores | 12 cores | 100 cores |
+| Nucleosomes        | 77,060      | 77,060            | 13,811,032               | 13,811,032     |
+| Interactions pairs | 24,163,427 | 24,163,427        | 3,220,503,431            | 3,220,503,431 |
+| Nucleosome interactions | 77,060 x 77,060 | 77,060 x 77,060   | 13,811,032 x 13,811,032  | 13,811,032 x 13,811,032 |
+| Time to prepare (hh:mm:ss) | 0:03:13  | 0:00:43  | 2:59:04 | 1:20:34 |
+| Time to plot (hh:mm:ss) | 0:00:11 | 0:00:05 | 0:02:56       | 0:02:17       |
 
 ------
 ## 4 Publication 
