@@ -534,4 +534,4 @@ The time for `plot` took just under *3 minutes*.
 ------
 ## 4 Publication 
 
-Mehrdad Oveisi, Manu Shukla, Nogayhan Seymen, Masae Ohno, Yuichi Taniguchi, Sunil Nahata, Remco Loos, Ghulam J Mufti, Robin C Allshire, Stefan Dimitrov, Mohammad M Karimi, iNucs: Inter-Nucleosome Interactions, Bioinformatics, 2021;, btab698, https://doi.org/10.1093/bioinformatics/btab698.
+Mehrdad Oveisi, Manu Shukla, Nogayhan Seymen, Masae Ohno, Yuichi Taniguchi, Sunil Nahata, Remco Loos, Ghulam J Mufti, Robin C Allshire, Stefan Dimitrov, Mohammad M Karimi, iNucs: Inter-Nucleosome Interactions, Bioinformatics, 2021; DOI: https://doi.org/10.1093/bioinformatics/btab698.
