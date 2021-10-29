@@ -80,7 +80,7 @@ class InputFileError(SyntaxError):
         self.filename = filename
 
 
-# todo make Files a service so that multiple processes can interact with it
+# todo make Files a service so that multiple processes can interact with it. The API is now suboptimal due to this.
 # todo re-write methods to better handle zip/unzip, fullpath/relative-path, exist/non-exist, ... cases
 class Files:
     S_INTER = 'state_inter'
@@ -1999,8 +1999,8 @@ class CLI:
         nuc_id_min = full_ijv[['nuc_id1', 'nuc_id2']].min().min()
         nuc_id_max = full_ijv[['nuc_id1', 'nuc_id2']].max().max()
         max_min = nuc_id_max - nuc_id_min
-        nuc_id_min -= max_min * .05  # making min 5% smaller
-        nuc_id_max += max_min * .05  # making max 5% larger
+        nuc_id_min -= max_min * .05  # making nuc_id_min 5% smaller
+        nuc_id_max += max_min * .05  # making nuc_id_max 5% larger
 
         x_range = Range1d(nuc_id_min, nuc_id_max, bounds='auto')
         y_range = Range1d(nuc_id_max, nuc_id_min, bounds='auto')  # flipped order: max, min
@@ -2057,7 +2057,8 @@ class CLI:
                 color_bar_mapper = LinearColorMapper(  # adjust low and high linearly
                     palette=palettes[orient], low=np.sinh(min_arcsinh_counts), high=np.sinh(max_arcsinh_counts))
                 color_bar = ColorBar(color_mapper=color_bar_mapper, label_standoff=10, height=20)
-                p.height += color_bar.label_standoff + color_bar.height
+                if p.height is not None:
+                    p.height += color_bar.label_standoff + color_bar.height
                 p.add_layout(color_bar, 'below')
 
             set_fig_attr(p)
@@ -2074,7 +2075,8 @@ class CLI:
 
             if platform.system() != 'Windows':  # hide ColorBar in Windows due to display bug
                 color_bar = ColorBar(color_mapper=mapper_norm, label_standoff=10, height=20)
-                p_norm.height += color_bar.label_standoff + color_bar.height
+                if p_norm.height is not None:
+                    p_norm.height += color_bar.label_standoff + color_bar.height
                 p_norm.add_layout(color_bar, 'below')
 
             set_fig_attr(p_norm)
@@ -2329,7 +2331,7 @@ class CLI:
         testing_args = f"prepare {refresh} {chroms_file} {nucs_file} {interas_file} --dir {working_dir}"
         # testing_args = f"plot {working_dir} chrIII 237000 262000 --prefix my_plot"
         LOGGER.debug(f"inucs {testing_args}")
-        arguments = parser.parse_args(testing_args.split())  # for debugging
+        arguments = parser.parse_args(testing_args.split())
 
         return arguments
 
@@ -2372,7 +2374,13 @@ if __name__ == "__main__":
     LOGGER.setLevel(level=logging.DEBUG)  # use logging.INFO or logging.DEBUG
     FILES = Files()  # each command handler will reset FILES with appropriate parameters
 
-    main()
+    try:
+        main()
+    except Exception as e:
+        if S.TESTING_MODE:
+            raise e
+        else:
+            LOGGER.error(e)
 
 # done Min Python version was reduced to 3.8
 # done input checking, e.g.: validate_chroms_file, validate_nucs_file, validate_interas_file
@@ -2387,13 +2395,13 @@ if __name__ == "__main__":
 # done add to Legend '+-', '-+', '++', '--'
 # done Colors, Font size
 # done Bokeh, default tool? on scroll zoom
+# done Bokeh, multiple HoverTools (tooltips)
+# done Efficiency: use parallelism to utilize multicore CPUs
+# done Efficiency, Mem: use categorical data type in DataFrames to reduce the size
+# done doc: renew running time measurements (Yeast, Human, PC, HPC)
 # todo Bokeh, Full GUI app?
-# todo Bokeh, multiple HoverTools (tooltips)
 # todo Bokeh, keep aspect ratio the same as zooming in and out
 # todo Bokeh, resize plot?
-# todo Efficiency: use parallelism to utilize multicore CPUs
-# todo Efficiency, Mem: use categorical data type in DataFrames to reduce the size
 # todo Efficiency, Mem: use memory profiling to see where is highest memory usage
 # todo Efficiency, Mem: check lru_cache memory usage in find_nucs_in_region, for example.
-# TODO doc: renew running time measurements (Yeast, Human, PC, HPC)
 # TODO deployment methods? https://conda.io/projects/conda-build/en/latest/user-guide/tutorials/index.html
