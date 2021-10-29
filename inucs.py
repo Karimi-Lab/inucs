@@ -1834,24 +1834,6 @@ class CLI:
     """Command Line Interface"""
 
     @classmethod
-    def handler_pairtools_command(cls, command, pairtools_arguments):
-        pairtools_command = command + ' ' + ' '.join(pairtools_arguments)
-        print(pairtools_command)
-
-        try:  # first make sure that bash is available
-            process = subprocess.Popen(
-                '/bin/bash', stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        except FileNotFoundError:
-            print('Could not find "bash" on this system, so cannot proceed. '
-                  'Please run pairtools directly on the commandline. Type "pairtools -h" for more information.')
-        else:
-            out, err = process.communicate(pairtools_command)
-            if err:
-                raise RuntimeError(err)
-
-            print(out)
-
-    @classmethod
     def handler_prepare_command(cls, command, chroms_file, nucs_file, interas_file, working_dir,
                                 norm_distance, keep_nucs_cols, keep_cache, n_processes, refresh, zipped=False):
 
@@ -2137,18 +2119,6 @@ class CLI:
                     Suppress the progress output. Still, a log file will be saved in the working folder.""",
             }
         },
-        'pairtools': {
-            'help': """
-                This command allows to create files in "pair" format from sam files or bam files. 
-                All your commandline arguments will passed to pairtools for processing. 
-                Please see instructions on pairtools website https://pairtools.readthedocs.io """,
-            'epilog': 'NOTE: This command requires pairtools.',
-            'args': {
-                'pairtools_arguments': """
-                All arguments presented here will be passed to pairtools for processing. To see the available option,
-                type 'pairtools --help' on the commandline.""",
-            },
-        },
         'prepare': {
             'help': """
                 Creates nuc-nuc interaction matrices, given a chromosomes file,
@@ -2253,7 +2223,7 @@ class CLI:
 
         # # # Create the UI commands
         commands = dict()
-        for c in ['pairtools', 'prepare', 'plot']:
+        for c in ['prepare', 'plot']:
             commands[c] = subparsers.add_parser(c, help=h[c]['help'], description=h[c]['help'], epilog=h[c]['epilog'])
 
         # # # arguments for main
@@ -2262,10 +2232,6 @@ class CLI:
         parser_main.add_argument(a[1:3], a, help=h[c]['args'][a], default=False, action='store_true')
 
         # # # arguments for commands
-        c = 'pairtools'  # c for Command
-        a = 'pairtools_arguments'  # a for Argument
-        commands[c].add_argument(a, help=h[c]['args'][a], nargs=argparse.REMAINDER)
-
         c = 'prepare'  # c for Command
         a = 'chroms_file'  # a for Argument
         commands[c].add_argument(a, help=h[c]['args'][a], metavar=f'<{a}>')
@@ -2360,7 +2326,6 @@ def main():
     # using args.command, select a command handler function
     command_handler = {
         None: lambda **_: commandline_parser.print_help(),  # prints help, ignoring any arguments passed to it
-        'pairtools': CLI.handler_pairtools_command,
         'prepare': CLI.handler_prepare_command,
         'plot': CLI.handler_plot_command,
     }.get(args.command)
