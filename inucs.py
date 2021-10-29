@@ -2021,20 +2021,20 @@ class CLI:
             plot_width=600, plot_height=670, x_axis_location='above', toolbar_location='below',
             x_range=x_range, y_range=y_range, tools=tools, x_axis_label='Nucleosome 1', y_axis_label='Nucleosome 2', )
 
-        p_overlaid = figure(
-            title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
-            **figure_args)
-        set_fig_attr(p_overlaid)
-        # p_overlaid.height -= 30  # crashes in Windows because height is None
-
-        p_overlaid_norm = figure(title="Normalized interaction counts", **figure_args)
-        set_fig_attr(p_overlaid_norm)
-        # p_overlaid_norm.height -= 30  # crashes in Windows because height is None
-
-        lyt = layout([[p_overlaid, p_overlaid_norm]])
+        # p_overlaid = figure(
+        #     title=f'Nuc-Nuc Interaction Counts for Chrom {chrom} from pos {start_region} to {end_region}',
+        #     **figure_args)
+        # set_fig_attr(p_overlaid)
+        # # p_overlaid.height -= 30  # crashes in Windows because height is None
+        #
+        # p_overlaid_norm = figure(title="Normalized interaction counts", **figure_args)
+        # set_fig_attr(p_overlaid_norm)
+        # # p_overlaid_norm.height -= 30  # crashes in Windows because height is None
+        #
+        # lyt = layout([[p_overlaid, p_overlaid_norm]])
 
         tabs = list()
-        tabs.append(Panel(child=lyt, title='Overlaid', closable=False))
+        # tabs.append(Panel(child=lyt, title='Overlaid', closable=False))
         for orient, ijv in full_ijv.groupby('orient'):  # matrices.items():
             orient_label = f"{orient} ({','.join(Files.get_strands(orient))})".capitalize()
             title = f"Nuc-Nuc Interactions for range: {chrom},{start_region}-{end_region} and orient: {orient_label}"
@@ -2084,31 +2084,31 @@ class CLI:
             lyt = layout([[p, p_norm]])  # , sizing_mode='fixed')
             tabs.append(Panel(child=lyt, title=orient_label, closable=False))
 
-            # Overlaid tab
-            legend_label = '' if orient == 'all' else ' (' + ','.join(Files.get_strands(orient)) + ')'
-            legend_label = orient.title() + legend_label
-            r = p_overlaid.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
-                                fill_color={'field': 'arcsinh_counts', 'transform': mapper},
-                                line_color=None, legend_label=legend_label)
-
-            p_overlaid.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
-            if orient != 'all':
-                r.visible = False
-
-            r = p_overlaid_norm.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
-                                     fill_color={'field': 'arcsinh_counts', 'transform': mapper_norm},
-                                     line_color=None, legend_label=legend_label)
-
-            p_overlaid_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
-            if orient != 'all':
-                r.visible = False
-
-        p_overlaid.add_tools(SaveTool())
-        p_overlaid.legend.location = 'bottom_left'
-        p_overlaid.legend.click_policy = 'hide'
-        p_overlaid_norm.add_tools(SaveTool())
-        p_overlaid_norm.legend.location = 'bottom_left'
-        p_overlaid_norm.legend.click_policy = 'hide'
+        #     # Overlaid tab
+        #     legend_label = '' if orient == 'all' else ' (' + ','.join(Files.get_strands(orient)) + ')'
+        #     legend_label = orient.title() + legend_label
+        #     r = p_overlaid.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
+        #                         fill_color={'field': 'arcsinh_counts', 'transform': mapper},
+        #                         line_color=None, legend_label=legend_label)
+        #
+        #     p_overlaid.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
+        #     if orient != 'all':
+        #         r.visible = False
+        #
+        #     r = p_overlaid_norm.rect(source=ijv, x='nuc_id1', y='nuc_id2', width=1, height=1, alpha=.9,
+        #                              fill_color={'field': 'arcsinh_counts', 'transform': mapper_norm},
+        #                              line_color=None, legend_label=legend_label)
+        #
+        #     p_overlaid_norm.add_tools(HoverTool(renderers=[r], tooltips=[(orient.title(), '')] + tooltips))
+        #     if orient != 'all':
+        #         r.visible = False
+        #
+        # p_overlaid.add_tools(SaveTool())
+        # p_overlaid.legend.location = 'bottom_left'
+        # p_overlaid.legend.click_policy = 'hide'
+        # p_overlaid_norm.add_tools(SaveTool())
+        # p_overlaid_norm.legend.location = 'bottom_left'
+        # p_overlaid_norm.legend.click_policy = 'hide'
 
         last_tab = len(tabs) - 1
         tabs = Tabs(tabs=tabs)
