@@ -1406,7 +1406,7 @@ class CLI:
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_name, save_only):
         from bokeh.io import show, save
         from bokeh.layouts import layout
-        from bokeh.models import ColorBar, Panel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
+        from bokeh.models import ColorBar, TabPanel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
         from bokeh.models import HoverTool, PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
         from bokeh.plotting import figure, output_file
         from bokeh.palettes import Greys, Oranges, Greens, Blues, Purples, Reds
@@ -1505,7 +1505,7 @@ class CLI:
             set_fig_attr(p_norm)
 
             lyt = layout([[p, p_norm]])  # , sizing_mode='fixed')
-            tabs.append(Panel(child=lyt, title=orient_label, closable=False))
+            tabs.append(TabPanel(child=lyt, title=orient_label, closable=False))
 
         last_tabs = len(tabs) - 1
         tabs = Tabs(tabs=tabs)
