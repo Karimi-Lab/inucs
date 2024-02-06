@@ -508,7 +508,7 @@ class Chroms(abc.Sequence):
 
     def __init__(self, chrom_list_file, comment: str = S.COMMENT_CHAR, name: str = None):
         chroms = pd.read_csv(chrom_list_file, names=['chrom'], comment=comment,
-                             sep=S.FIELD_SEPARATOR, header=None, usecols=[0], squeeze=True)
+                             sep=S.FIELD_SEPARATOR, header=None, usecols=[0]).squeeze()
 
         if len(chroms) > 0 and chroms[0] in ['chrom', 'chr']:  # remove the first row if it was a header row
             chroms = chroms.drop(index=0).reset_index(drop=True)
