@@ -1945,7 +1945,7 @@ class CLI:
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_file: Path, save_only):
         from bokeh.io import show, save
         from bokeh.layouts import layout
-        from bokeh.models import ColorBar, Panel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
+        from bokeh.models import ColorBar, TabPanel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
         from bokeh.models import HoverTool, PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
         from bokeh.plotting import figure, output_file as save_file
         from bokeh.palettes import Greys, Oranges, Greens, Blues, Purples, Reds
@@ -2000,7 +2000,7 @@ class CLI:
         # Bokeh Bug?
         # Setting match_aspect=True, aspect_scale=1 does not work for figure.rect, so setting width and height manually
         figure_args = dict(
-            plot_width=600, plot_height=670, x_axis_location='above', toolbar_location='below',
+            width=600, height=670, x_axis_location='above', toolbar_location='below',
             x_range=x_range, y_range=y_range, tools=tools, x_axis_label='Nucleosome 1', y_axis_label='Nucleosome 2', )
 
         # p_overlaid = figure(
@@ -2064,7 +2064,7 @@ class CLI:
             set_fig_attr(p_norm)
 
             lyt = layout([[p, p_norm]])  # , sizing_mode='fixed')
-            tabs.append(Panel(child=lyt, title=orient_label, closable=False))
+            tabs.append(TabPanel(child=lyt, title=orient_label, closable=False))
 
         #     # Overlaid tab
         #     legend_label = '' if orient == 'all' else ' (' + ','.join(Files.get_strands(orient)) + ')'
