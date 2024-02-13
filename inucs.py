@@ -1945,7 +1945,7 @@ class CLI:
     def make_heat_map(cls, matrices, chrom, start_region, end_region, output_file: Path, save_only):
         from bokeh.io import show, save
         from bokeh.layouts import layout
-        from bokeh.models import ColorBar, Panel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
+        from bokeh.models import ColorBar, TabPanel, Tabs, Range1d, LinearColorMapper  # , LogColorMapper
         from bokeh.models import HoverTool, PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
         from bokeh.plotting import figure, output_file as save_file
         from bokeh.palettes import Greys, Oranges, Greens, Blues, Purples, Reds
@@ -2064,7 +2064,7 @@ class CLI:
             set_fig_attr(p_norm)
 
             lyt = layout([[p, p_norm]])  # , sizing_mode='fixed')
-            tabs.append(Panel(child=lyt, title=orient_label, closable=False))
+            tabs.append(TabPanel(child=lyt, title=orient_label, closable=False))
 
         #     # Overlaid tab
         #     legend_label = '' if orient == 'all' else ' (' + ','.join(Files.get_strands(orient)) + ')'
