@@ -2000,7 +2000,7 @@ class CLI:
         # Bokeh Bug?
         # Setting match_aspect=True, aspect_scale=1 does not work for figure.rect, so setting width and height manually
         figure_args = dict(
-            plot_width=600, plot_height=670, x_axis_location='above', toolbar_location='below',
+            width=600, height=670, x_axis_location='above', toolbar_location='below',
             x_range=x_range, y_range=y_range, tools=tools, x_axis_label='Nucleosome 1', y_axis_label='Nucleosome 2', )
 
         # p_overlaid = figure(
